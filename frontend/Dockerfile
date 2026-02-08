@@ -1,5 +1,5 @@
 FROM node:24-alpine
-#최신 LTS 버전인 24-alpine 사용
+#최신 LTS 버전인 24-alpine 사용합니다.
 
 WORKDIR /frontend
 #컨테이너 내 생성되는 작업폴더입니다.
