@@ -11,3 +11,9 @@ devsign.co.kr {
         reverse_proxy devsign-frontend:5173
     }
 }
+
+oj.devsign.co.kr {
+    handle {
+        reverse_proxy localhost:8000
+    }
+}
