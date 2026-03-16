@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { MessageSquare, Eye, Heart, ArrowRight } from "lucide-react";
+import { MessageSquare, Eye, Heart, ArrowRight, User, Wallet } from "lucide-react";
 
 interface BoardSectionProps {
   onNavigate: (pageId: string, itemId?: any) => void;
@@ -42,6 +42,7 @@ export const Board = ({ onNavigate, posts }: BoardSectionProps) => {
                     ? "bg-amber-50 text-amber-600 border border-amber-100" 
                     : "bg-indigo-50 text-indigo-600 border border-indigo-100"
                 }`}>
+                  {post.category === "회비" && <Wallet size={10} className="inline mr-1 mb-0.5" />}
                   {post.category || "일반"}
                 </span>
               </div>
@@ -54,7 +55,27 @@ export const Board = ({ onNavigate, posts }: BoardSectionProps) => {
               </p>
 
               <div className="flex items-center justify-between pt-6 border-t border-slate-50">
-                <div className="text-slate-700 font-black text-xs">{post.author}</div>
+                {/* ✨ 작성자 정보 영역: 디스코드 프로필 이미지 추가 */}
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 shadow-sm shrink-0 flex items-center justify-center">
+                    {post.profileImage ? (
+                      <img 
+                        src={post.profileImage} 
+                        alt={post.author} 
+                        className="w-full h-full object-cover" 
+                        onError={(e: any) => {
+                          // 이미지 로드 실패 시 디스코드 기본 아바타로 대체
+                          e.target.src = "https://cdn.discordapp.com/embed/avatars/0.png";
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-300">
+                        <User size={14} />
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-xs font-black text-slate-700">{post.author}</span>
+                </div>
                 
                 {/* ✨ 하단 스태츠 영역: 조회수, 댓글수, 좋아요수 */}
                 <div className="flex items-center gap-3 text-slate-300 font-bold text-[11px]">

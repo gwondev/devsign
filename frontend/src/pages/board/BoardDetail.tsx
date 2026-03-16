@@ -24,15 +24,13 @@ export const BoardDetail = ({
   const [commentContent, setCommentContent] = useState("");
   const commentsEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // ✨ 페이지 진입 시 및 게시글 변경 시 화면 최상단으로 강제 이동
   useEffect(() => {
-    if (post?.commentsList?.length > 0) {
-      scrollToBottom();
-    }
-  }, [post?.commentsList?.length]);
+    window.scrollTo(0, 0);
+  }, [post?.id]);
+
+  // ❌ (삭제됨) 기존의 post?.commentsList?.length 변화 감지 시 scrollToBottom 로직을 제거했습니다.
+  // 이 로직이 게시글 로드 시 댓글이 있으면 화면을 아래로 강제 이동시켰던 원인입니다.
 
   useEffect(() => {
     if (isLoggedIn && post?.id) {

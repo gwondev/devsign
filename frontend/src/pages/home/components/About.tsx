@@ -62,7 +62,7 @@ export const About = () => {
 
               <div className="grid grid-cols-2 gap-8 mt-12 pt-10 border-t border-slate-100">
                 <div>
-                  <div className="text-4xl font-black text-indigo-600 mb-1">100+</div>
+                  <div className="text-4xl font-black text-indigo-600 mb-1">60+</div>
                   <div className="text-slate-500 font-bold text-sm">활동 부원</div>
                 </div>
                 <div>
@@ -84,13 +84,13 @@ export const About = () => {
               whileInView={{ opacity: 1, y: 0 }}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-50 text-indigo-600 font-bold text-sm mb-6"
             >
-              <Cpu size={16} /> IoT & Discord Infrastructure
+              <Cpu size={16} /> IoT & Discord 프로젝트
             </motion.div>
             <h2 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight mb-6 leading-tight">
               손끝에서 시작되는<br />스마트 워크스페이스
             </h2>
             <p className="text-slate-500 font-medium text-lg max-w-2xl leading-relaxed">
-              DEVSIGN은 직접 구축한 디스코드 봇 시스템을 통해 실습실의 모든 환경을 관리합니다.
+              DEVSIGN은 직접 구축한 디스코드 봇 시스템을 통해 동아리방의 모든 환경을 관리합니다.
             </p>
           </div>
 
@@ -114,7 +114,7 @@ export const About = () => {
                     <h3 className="text-2xl font-black text-slate-900 flex items-center gap-2">
                       WINDEV <span className="px-2 py-0.5 rounded-lg bg-indigo-600 text-[10px] text-white uppercase tracking-widest">APP</span>
                     </h3>
-                    <p className="text-slate-400 font-bold text-sm uppercase tracking-wider">Climate Control Bot</p>
+                    <p className="text-slate-400 font-bold text-sm uppercase tracking-wider">냉난방기 제어 봇</p>
                   </div>
                 </div>
               </div>
@@ -126,15 +126,15 @@ export const About = () => {
               <div className="bg-slate-900 rounded-[2.5rem] p-6 md:p-8 shadow-2xl border border-slate-800 flex flex-col justify-between min-h-[340px]">
                 <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-5">
                   <span className="text-slate-400 text-xs font-black uppercase tracking-widest">[냉난방기 제어]</span>
-                  <div className="px-3 py-1 rounded-full bg-green-500/10 text-green-500 text-[10px] font-black tracking-widest animate-pulse">CONNECTED</div>
+                  <div className="px-3 py-1 rounded-full bg-green-500/10 text-green-500 text-[10px] font-black tracking-widest animate-pulse">연결됨</div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-slate-800/50 p-5 rounded-2xl border border-slate-700/50">
-                    <p className="text-green-400 font-black text-[11px] mb-2 uppercase">Cooling</p>
+                    <p className="text-green-400 font-black text-[11px] mb-2 uppercase">냉방</p>
                     <p className="text-white font-black text-xl tracking-tight">18°C ~ 27°C</p>
                   </div>
                   <div className="bg-slate-800/50 p-5 rounded-2xl border border-slate-700/50">
-                    <p className="text-red-400 font-black text-[11px] mb-2 uppercase">Heating</p>
+                    <p className="text-red-400 font-black text-[11px] mb-2 uppercase">난방</p>
                     <p className="text-white font-black text-xl tracking-tight">23°C ~ 30°C</p>
                   </div>
                 </div>
@@ -166,7 +166,7 @@ export const About = () => {
                     <h3 className="text-2xl font-black text-slate-900 flex items-center gap-2">
                       크산테 <span className="px-2 py-0.5 rounded-lg bg-indigo-600 text-[10px] text-white uppercase tracking-widest">APP</span>
                     </h3>
-                    <p className="text-slate-400 font-bold text-sm uppercase tracking-wider">Access Control Bot</p>
+                    <p className="text-slate-400 font-bold text-sm uppercase tracking-wider">도어락 제어 봇</p>
                   </div>
                 </div>
               </div>
@@ -176,7 +176,7 @@ export const About = () => {
               </p>
 
               <div className="space-y-4 bg-white/50 p-6 rounded-[2.5rem] border border-slate-200 shadow-inner min-h-[340px] flex flex-col">
-                <div className="px-4 py-2 text-[10px] font-black text-slate-300 uppercase tracking-widest">Security Activity</div>
+                <div className="px-4 py-2 text-[10px] font-black text-slate-300 uppercase tracking-widest">[도어락 제어]</div>
                 <div className="flex-1 flex flex-col justify-around">
                   {[
                     { name: "김유찬", time: "오전 09:38", color: "indigo" },

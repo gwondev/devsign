@@ -3,7 +3,10 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X, LogOut, ChevronRight } from "lucide-react";
 import { Button } from "../ui/button";
- // ✨ 로그아웃 로그 기록을 위해 axios 추가
+import { useLocation, useNavigate } from "react-router-dom"; // ✨ 라우터 훅 추가
+
+// ✨ 여기에 디스코드 서버 아이콘 링크를 넣어주세요!
+const DISCORD_SERVER_ICON = "https://cdn.discordapp.com/icons/462157565229268993/70266f261f01165295208967e73f0555.webp?size=160&quality=lossless";
 
 // 전체 메뉴 데이터
 const navLinks = [
@@ -28,6 +31,10 @@ interface NavbarProps {
 export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout }: NavbarProps) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState(currentPage); // ✨ 현재 활성화된 밑줄 상태
+  
+  const location = useLocation(); // ✨ 현재 경로 확인용
+  const navigate = useNavigate(); // ✨ 페이지 이동용
 
   // ✨ 컴포넌트 마운트 시 및 로그인 상태 변경 시 사용자 정보 로드
   useEffect(() => {
@@ -39,8 +46,71 @@ export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout
     }
   }, [isLoggedIn]);
 
+  // ✨ 스크롤 위치를 감지하여 밑줄(activeTab)을 자동으로 변경 (ScrollSpy)
+  useEffect(() => {
+    // 메인 페이지가 아닐 때는 부모가 주는 currentPage를 그대로 따름
+    if (location.pathname !== "/") {
+      setActiveTab(currentPage);
+      return;
+    }
+
+    const handleScroll = () => {
+      // 감지할 섹션 리스트 (Home.tsx의 id와 navLinks의 id 매칭)
+      const sections = [
+        { id: "home", navId: "home" },
+        { id: "events", navId: "event" },
+        { id: "notice", navId: "notice" },
+        { id: "board", navId: "board" },
+        { id: "about", navId: "about" },
+        { id: "faq", navId: "faq" }
+      ];
+
+      let currentSection = "home";
+      for (const section of sections) {
+        const element = document.getElementById(section.id);
+        if (element) {
+          const rect = element.getBoundingClientRect();
+          // 섹션이 화면 상단(150px 기준)에 도달했는지 확인
+          if (rect.top <= 150) {
+            currentSection = section.navId;
+          }
+        }
+      }
+      setActiveTab(currentSection);
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    handleScroll(); // 초기 로드 시 실행
+
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [location.pathname, currentPage]);
+
   const handleNavigate = (id: string) => {
-    onNavigate(id);
+    // ✨ 메인 페이지에서 스크롤로 이동할 섹션들
+    const scrollSections = ["home", "event", "notice", "board", "about", "faq"];
+
+    if (scrollSections.includes(id)) {
+      // Home.tsx의 id="events" 와 맞추기 위한 예외 처리 (event -> events)
+      const targetId = id === "event" ? "events" : id;
+      
+      setActiveTab(id); // 클릭 즉시 밑줄 이동
+
+      if (location.pathname === "/") {
+        // 이미 메인 페이지라면 부드럽게 스크롤
+        const element = document.getElementById(targetId);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth" });
+        }
+      } else {
+        // 다른 페이지라면 메인 페이지로 이동하면서 해시(#) 추가
+        navigate(`/#${targetId}`);
+      }
+    } else {
+      // ✨ 총회, 관리, 로그인 등 "새 페이지"로 이동할 때는 스크롤을 최상단으로 리셋
+      onNavigate(id);
+      window.scrollTo(0, 0); 
+    }
+    
     setIsMobileMenuOpen(false);
   };
 
@@ -74,10 +144,17 @@ export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout
       <nav className="fixed top-0 left-0 right-0 z-[100] bg-white/80 backdrop-blur-xl border-b border-slate-100 h-20 flex items-center shadow-sm">
         <div className="w-full px-8 md:px-12 flex items-center justify-between">
 
-          {/* 로고 영역 */}
+          {/* 로고 영역 - 'D' 텍스트 박스를 실제 이미지 로고로 교체 */}
           <div className="flex items-center gap-3 cursor-pointer shrink-0" onClick={() => handleNavigate("home")}>
-            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-200">
-              D
+            <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg border border-slate-100 flex items-center justify-center bg-white group hover:scale-105 transition-transform">
+              <img 
+                src={DISCORD_SERVER_ICON} 
+                alt="DEVSIGN" 
+                className="w-full h-full object-cover"
+                onError={(e: any) => {
+                  e.target.style.display = 'none'; // 이미지 로드 실패 시 숨김 처리
+                }}
+              />
             </div>
             <span className="font-bold text-2xl text-slate-900 tracking-tight">DEVSIGN</span>
           </div>
@@ -85,7 +162,7 @@ export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout
           {/* 중앙 메뉴 영역 */}
           <div className="hidden lg:flex items-center gap-10">
             {visibleLinks.map((link) => {
-              const isActive = currentPage === link.id;
+              const isActive = activeTab === link.id; // ✨ activeTab 사용
               return (
                 <button
                   key={link.id}
@@ -123,7 +200,6 @@ export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout
                 </>
               ) : (
                 <div className="flex items-center gap-3">
-                  {/* ✨ 사람 아이콘 대신 디스코드 프로필 사진으로 교체 */}
                   <div
                     className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-all cursor-pointer group"
                     onClick={() => handleNavigate("profile")}
@@ -135,7 +211,7 @@ export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout
                           alt={user.name}
                           className="w-full h-full object-cover"
                           onError={(e: any) => {
-                            e.target.src = "https://cdn.discordapp.com/embed/avatars/0.png"; // 로드 실패 시 디스코드 기본 아바타
+                            e.target.src = "https://cdn.discordapp.com/embed/avatars/0.png";
                           }}
                         />
                       ) : (
@@ -170,7 +246,7 @@ export const Navbar = ({ onNavigate, currentPage, isLoggedIn, userRole, onLogout
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-[105] lg:hidden" onClick={() => setIsMobileMenuOpen(false)} />
             <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 30, stiffness: 300 }} className="fixed top-0 right-0 bottom-0 w-[85%] max-w-sm bg-white z-[110] lg:hidden flex flex-col p-8 pt-24 gap-6 shadow-2xl">
               {visibleLinks.map((link) => {
-                const isActive = currentPage === link.id;
+                const isActive = activeTab === link.id; // ✨ 모바일도 activeTab 적용
                 return (
                   <button key={link.id} onClick={() => handleNavigate(link.id)} className={`text-left py-3 px-4 text-xl font-bold rounded-2xl transition-all ${isActive ? "bg-indigo-50 text-indigo-600" : "text-slate-700"}`}>
                     {link.name}

@@ -1,6 +1,9 @@
 import { motion } from "framer-motion";
 import { Phone, MapPin, Mail, ChevronRight } from "lucide-react";
 
+// ✨ 여기에 디스코드 서버 아이콘 링크를 넣어주세요!
+const DISCORD_SERVER_ICON = "https://cdn.discordapp.com/icons/462157565229268993/70266f261f01165295208967e73f0555.webp?size=160&quality=lossless";
+
 interface FooterProps {
   onNavigate: (page: string) => void;
 }
@@ -8,7 +11,7 @@ interface FooterProps {
 export const Footer = ({ onNavigate }: FooterProps) => {
   const currentYear = new Date().getFullYear();
 
-  // 운영진 연락처 데이터
+  // 운영진 연락처 데이터 [cite: 1438]
   const admins = [
     { role: "회장", year: "22", name: "김형민", phone: "010-9171-8162" },
     { role: "부회장", year: "22", name: "이수혁", phone: "010-6545-1948" },
@@ -26,10 +29,18 @@ export const Footer = ({ onNavigate }: FooterProps) => {
               className="flex items-center gap-3 mb-6 cursor-pointer"
               onClick={() => onNavigate("home")}
             >
-              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">
-                D
+              {/* ✨ 'D' 텍스트 박스를 실제 이미지 로고로 교체 */}
+              <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-indigo-500/20 bg-white flex items-center justify-center">
+                <img 
+                  src={DISCORD_SERVER_ICON} 
+                  alt="DEVSIGN" 
+                  className="w-full h-full object-cover"
+                  onError={(e: any) => {
+                    e.target.style.display = 'none'; // 이미지 로드 실패 시 숨김 처리
+                  }}
+                />
               </div>
-              <span className="font-bold text-2xl text-white tracking-tight italic">DEVSIGN</span>
+              <span className="font-bold text-2xl text-white tracking-tight">DEVSIGN</span>
             </div>
             <p className="text-sm leading-relaxed font-medium">
               조선대학교 IT융합대학<br />
@@ -57,7 +68,7 @@ export const Footer = ({ onNavigate }: FooterProps) => {
             </ul>
           </div>
 
-          {/* 3. 운영진 연락처 영역 (소셜 아이콘 대체) */}
+          {/* 3. 운영진 연락처 영역 (소셜 아이콘 대체) [cite: 1446] */}
           <div>
             <h4 className="text-white font-bold mb-6 flex items-center gap-2">
               <Phone size={16} className="text-indigo-500" /> 운영진 연락처
@@ -79,7 +90,7 @@ export const Footer = ({ onNavigate }: FooterProps) => {
             </ul>
           </div>
 
-          {/* 4. 오시는 길 영역 */}
+          {/* 4. 오시는 길 영역 [cite: 1450] */}
           <div>
             <h4 className="text-white font-bold mb-6 flex items-center gap-2">
               <MapPin size={16} className="text-indigo-500" /> 오시는 길
@@ -91,23 +102,15 @@ export const Footer = ({ onNavigate }: FooterProps) => {
                   조선대학교 IT융합대학 4층 4122
                 </span>
               </div>
-              <div className="flex items-center gap-2 mt-4 text-xs text-indigo-400">
-                <Mail size={14} />
-                <span>official@devsign.com</span>
-              </div>
             </div>
           </div>
         </div>
 
-        {/* 하단 저작권 영역 */}
+        {/* 하단 저작권 영역 [cite: 1453] */}
         <div className="pt-10 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-6">
           <p className="text-[13px] font-medium">
             © {currentYear} <span className="text-indigo-500 font-bold tracking-tight">DEVSIGN</span>. All rights reserved.
           </p>
-          <div className="flex gap-8 text-[12px] font-bold tracking-wider uppercase">
-            <button className="hover:text-white transition-colors">Privacy</button>
-            <button className="hover:text-white transition-colors">Terms</button>
-          </div>
         </div>
       </div>
     </footer>

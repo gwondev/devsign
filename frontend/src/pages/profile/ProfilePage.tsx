@@ -147,7 +147,7 @@ export const ProfilePage = ({ onNavigate, user, setUser, posts = [] }: any) => {
               <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
                 <Settings size={28} />
               </div>
-              <h1 className="text-4xl font-[900] text-slate-900 tracking-tighter uppercase">Profile Setting</h1>
+              <h1 className="text-4xl font-[900] text-slate-900 tracking-tighter uppercase">프로필 설정</h1>
             </div>
           </div>
         </div>

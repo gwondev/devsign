@@ -64,7 +64,7 @@ export const AssemblyPage = ({ isAdmin, userStatus, loginId, onNavigate }: {
         <div className="mb-10 px-4">
           <div className="flex items-center gap-2 text-indigo-600 mb-2">
             <LayoutDashboard size={18} />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em]">System</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.2em]">총회 시스템</span>
           </div>
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">DEVSIGN</h2>
         </div>
@@ -81,7 +81,7 @@ export const AssemblyPage = ({ isAdmin, userStatus, loginId, onNavigate }: {
           ))}
           {isAdmin && (
             <div className="pt-8 mt-8 border-t border-slate-100">
-              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Admin Menu</p>
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">관리자 메뉴</p>
               {adminMenus.map((menu) => (
                 <SidebarLink key={menu.id} active={activeTab === menu.id} onClick={() => handleTabChange(menu.id)} icon={menu.icon} name={menu.name} isAdmin />
               ))}
