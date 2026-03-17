@@ -1,76 +1,76 @@
-services:
-  caddy:
-    image: caddy:latest
-    restart: always
-    container_name: devsign-caddy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - global_network
-    depends_on:
-      - frontend
-      - backend
+  services:
+    caddy:
+      image: caddy:latest
+      restart: always
+      container_name: devsign-caddy
+      ports:
+        - "80:80"
+        - "443:443"
+      volumes:
+        - ./Caddyfile:/etc/caddy/Caddyfile
+        # ✨ 격리된 루트 데이터 경로로 변경
+        - /devsign-data/caddy/data:/data
+        - /devsign-data/caddy/config:/config
+      networks:
+        - global_network
+      depends_on:
+        - frontend
+        - backend
 
-  backend:
-    restart: always
-    container_name: devsign-backend
-    build: ./backend
-    ports:
-      - "8080:8080"
-    networks:
-      - global_network
-    depends_on:
-      - db
-      - discord-bot
-    # 컨테이너 내부에서 'discord-bot'이라는 이름으로 통신하기 위해 링크를 보장합니다.
-    links:
-      - discord-bot
+    backend:
+      restart: always
+      container_name: devsign-backend
+      build: ./backend
+      ports:
+        - "8080:8080"
+      volumes:
+        # ✨ 게시글 이미지 및 총회 파일 저장용 볼륨 추가 (격리된 경로)
+        - /devsign-data/uploads:/app/uploads
+      networks:
+        - global_network
+      depends_on:
+        - db
+        - discord-bot
+      # 컨테이너 내부에서 'discord-bot'이라는 이름으로 통신하기 위해 링크를 보장합니다.
+      links:
+        - discord-bot
 
-  frontend:
-    restart: always
-    container_name: devsign-frontend
-    build: ./frontend
-    networks:
-      - global_network
+    frontend:
+      restart: always
+      container_name: devsign-frontend
+      build: ./frontend
+      networks:
+        - global_network
 
-  db:
-    restart: always
-    container_name: devsign-database
-    image: mysql:latest
-    environment:
-      MYSQL_ROOT_PASSWORD: devsign4122!
-      MYSQL_DATABASE: devsigndb 
-      MYSQL_USER: devsignuser
-      MYSQL_PASSWORD: devsign4122
-    volumes:
-      - db_data:/var/lib/mysql
-    networks:
-      - global_network
+    db:
+      restart: always
+      container_name: devsign-database
+      image: mysql:latest
+      environment:
+        MYSQL_ROOT_PASSWORD: devsign4122!
+        MYSQL_DATABASE: devsigndb 
+        MYSQL_USER: devsignuser
+        MYSQL_PASSWORD: devsign4122
+      volumes:
+        # ✨ DB 데이터를 격리된 루트 데이터 경로로 연결
+        - /devsign-data/mysql:/var/lib/mysql
+      networks:
+        - global_network
 
-  # 백엔드의 BOT_BASE 주소와 일치해야 하는 서비스 이름입니다.
-  discord-bot:
-    restart: always
-    container_name: devsign-bot
-    build: ./discord-bot
-    # FastAPI 통신을 위해 8000번 포트를 추가했습니다.
-    ports:
-      - "8000:8000"
-    env_file:
-      - /home/devsign/.env_devsign_bot
-    networks:
-      - global_network
-    depends_on:
-      - db
+    # 백엔드의 BOT_BASE 주소와 일치해야 하는 서비스 이름입니다.
+    discord-bot:
+      restart: always
+      container_name: devsign-bot
+      build: ./discord-bot
+      # FastAPI 통신을 위해 8000번 포트를 추가했습니다.
+      ports:
+        - "8000:8000"
+      env_file:
+        - /home/devsign/.env_devsign_bot
+      networks:
+        - global_network
+      depends_on:
+        - db
 
-volumes:
-  db_data:
-  caddy_data:
-  caddy_config:
-
-networks:
-  global_network:
+  networks:
+    global_network:
