@@ -116,17 +116,18 @@ export const BoardWrite = ({ onNavigate, isAdmin, user, fetchPosts, post }: any)
           </div>
 
           <div className="flex gap-1.5 md:gap-3 shrink-0">
+            {/* ✨ 수정됨: md:py-3.5 적용하여 버튼들 높이 통일 */}
             <Button 
               variant="ghost" 
               onClick={() => onNavigate("board-page")} 
-              className="px-3 py-2 md:px-8 md:py-6 rounded-lg md:rounded-2xl font-black text-slate-400 text-[11px] md:text-sm h-auto"
+              className="px-3 py-2 md:px-8 md:py-3.5 rounded-lg md:rounded-2xl font-black text-slate-400 text-[11px] md:text-sm h-auto"
             >
               취소
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="bg-indigo-600 text-white px-3 py-2 md:px-10 md:py-6 rounded-lg md:rounded-2xl font-black shadow-xl disabled:bg-slate-300 transition-all active:scale-95 text-[11px] md:text-sm h-auto"
+              className="bg-indigo-600 text-white px-3 py-2 md:px-10 md:py-3.5 rounded-lg md:rounded-2xl font-black shadow-xl disabled:bg-slate-300 transition-all active:scale-95 text-[11px] md:text-sm h-auto"
             >
               {isSubmitting ? "처리 중..." : (post ? "수정 완료" : "등록하기")}
             </Button>
@@ -213,7 +214,7 @@ export const BoardWrite = ({ onNavigate, isAdmin, user, fetchPosts, post }: any)
                   onClick={() => fileInputRef.current?.click()}
                   className="aspect-square rounded-xl md:rounded-[1.5rem] border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-300 hover:border-indigo-300 hover:text-indigo-400 hover:bg-indigo-50/30 transition-all group shrink-0"
                 >
-                  <ImagePlus className="w-5 h-5 md:w-7 md:h-7 mb-1 md:mb-2 group-hover:scale-110 transition-transform" />
+                  <ImagePlus size={28} className="mb-2 group-hover:scale-110 transition-transform" />
                   <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Add Photo</span>
                 </button>
               </div>

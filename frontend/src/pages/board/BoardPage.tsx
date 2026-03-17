@@ -71,6 +71,7 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                 className="pl-11 pr-4 py-3.5 bg-white border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 w-72 font-bold text-sm shadow-sm transition-all"
               />
             </div>
+            {/* ✨ 수정됨: py-3.5로 변경하여 검색창과 세로 크기 통일 */}
             <Button 
               onClick={() => {
                 if (!isLoggedIn) {
@@ -79,7 +80,7 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                 }
                 onNavigate("board-write");
               }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 md:px-8 md:py-7 rounded-xl md:rounded-2xl font-black shadow-xl shadow-indigo-100 transition-all active:scale-95 flex items-center gap-1.5 md:gap-2 text-[11px] md:text-base h-auto shrink-0"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3.5 md:px-8 md:py-3.5 rounded-xl md:rounded-2xl font-black shadow-xl shadow-indigo-100 transition-all active:scale-95 flex items-center gap-1.5 md:gap-2 text-[11px] md:text-base h-auto shrink-0"
             >
               <Pencil className="w-3.5 h-3.5 md:w-[18px] md:h-[18px]" /> 글쓰기
             </Button>

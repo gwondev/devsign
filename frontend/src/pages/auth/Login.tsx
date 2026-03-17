@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import { User, Lock, ArrowRight, ArrowLeft, ShieldAlert } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
-
 // onLoginSuccess의 타입을 boolean에서 any(객체)로 변경하여 상세 데이터를 받을 수 있게 합니다.
 export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: string) => void; onLoginSuccess: (userData: any) => void }) => {
   const [userId, setUserId] = useState("");
@@ -56,70 +55,78 @@ export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: strin
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#f8faff] to-white px-6">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#f8faff] to-white px-4 md:px-6">
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md">
-        <button onClick={() => onNavigate("home")} className="flex items-center text-slate-400 font-bold text-sm mb-8 hover:text-slate-600 transition-colors">
-          <ArrowLeft size={18} className="mr-2" /> 메인으로 돌아가기
+        <button 
+          onClick={() => onNavigate("home")} 
+          className="flex items-center text-slate-400 font-bold text-xs md:text-sm mb-6 md:mb-8 hover:text-slate-600 transition-colors"
+        >
+          <ArrowLeft className="mr-2 w-4 h-4 md:w-[18px] md:h-[18px]" /> 메인으로 돌아가기
         </button>
 
-        <div className="bg-white rounded-[40px] shadow-2xl shadow-indigo-100/50 border border-slate-100 p-10 md:p-12 relative overflow-hidden">
+        <div className="bg-white rounded-[2rem] md:rounded-[40px] shadow-2xl shadow-indigo-100/50 border border-slate-100 p-6 md:p-12 relative overflow-hidden">
           {/* 장식용 배경 */}
-          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/50 rounded-full -mr-16 -mt-16 blur-3xl" />
+          <div className="absolute top-0 right-0 w-24 h-24 md:w-32 md:h-32 bg-indigo-50/50 rounded-full -mr-12 -mt-12 md:-mr-16 md:-mt-16 blur-3xl" />
 
           <div className="relative z-10">
-            <div className="mb-10">
-              <h1 className="text-4xl font-black text-slate-900 mb-3 tracking-tighter">Welcome!</h1>
-              <p className="text-slate-500 font-medium">DEVSIGN 서비스 로그인을 진행해주세요.</p>
+            <div className="mb-8 md:mb-10">
+              <h1 className="text-3xl md:text-4xl font-black text-slate-900 mb-2 md:mb-3 tracking-tighter">Welcome!</h1>
+              <p className="text-slate-500 font-medium text-sm md:text-base">DEVSIGN 서비스 로그인을 진행해주세요.</p>
             </div>
 
-            <form className="space-y-5" onSubmit={handleLogin}>
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">ID</label>
+            <form className="space-y-4 md:space-y-5" onSubmit={handleLogin}>
+              <div className="space-y-1.5 md:space-y-2">
+                <label className="text-[10px] md:text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">ID</label>
                 <div className="relative">
-                  <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                  <User className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4 md:w-[18px] md:h-[18px]" />
                   <input
                     type="text"
                     value={userId}
                     onChange={(e) => setUserId(e.target.value)}
                     placeholder="아이디를 입력하세요"
-                    className="w-full pl-14 pr-6 py-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
+                    className="w-full pl-11 md:pl-14 pr-4 md:pr-6 py-3.5 md:py-4 bg-slate-50 border-none rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium text-sm md:text-base"
                   />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">Password</label>
+              <div className="space-y-1.5 md:space-y-2">
+                <label className="text-[10px] md:text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                  <Lock className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4 md:w-[18px] md:h-[18px]" />
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="비밀번호를 입력하세요"
-                    className="w-full pl-14 pr-6 py-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
+                    className="w-full pl-11 md:pl-14 pr-4 md:pr-6 py-3.5 md:py-4 bg-slate-50 border-none rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium text-sm md:text-base"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end pt-1">
-                <button type="button" onClick={() => onNavigate("find-account")} className="text-xs font-bold text-slate-400 hover:text-indigo-600 transition-colors">
+              <div className="flex justify-end pt-0.5">
+                <button 
+                  type="button" 
+                  onClick={() => onNavigate("find-account")} 
+                  className="text-[11px] md:text-xs font-bold text-slate-400 hover:text-indigo-600 transition-colors"
+                >
                   계정 정보를 잊으셨나요?
                 </button>
               </div>
 
+              {/* ✨ 버튼 py 크기 조정 완료 */}
               <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-8 rounded-[2rem] bg-indigo-600 text-white font-black text-xl shadow-2xl shadow-indigo-200/50 hover:bg-indigo-700 hover:scale-[1.02] active:scale-95 transition-all mt-6"
+                className="w-full py-3.5 md:py-4.5 rounded-xl md:rounded-2xl bg-indigo-600 text-white font-black text-base md:text-lg shadow-xl shadow-indigo-200/50 hover:bg-indigo-700 hover:scale-[1.02] active:scale-95 transition-all mt-4 md:mt-6 h-auto"
               >
-                {isLoading ? "로그인 중..." : "로그인"} <ArrowRight className="ml-2" />
+                {isLoading ? "로그인 중..." : "로그인"} <ArrowRight className="ml-2 w-4 h-4 md:w-5 md:h-5" />
               </Button>
             </form>
 
-            <div className="mt-10 text-center">
-              <p className="text-slate-400 font-bold text-sm">
+            <div className="mt-8 md:mt-10 text-center">
+              <p className="text-slate-400 font-bold text-xs md:text-sm">
                 아직 회원이 아니신가요?{" "}
-                <button onClick={() => onNavigate("signup")} className="text-indigo-600 hover:underline ml-1">회원가입</button>
+                <button onClick={() => onNavigate("signup")} className="text-indigo-600 font-black hover:underline ml-1">회원가입</button>
               </p>
             </div>
           </div>
