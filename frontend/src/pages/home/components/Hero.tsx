@@ -20,10 +20,15 @@ export const Hero = ({ isAdmin }: { isAdmin: boolean }) => {
   useEffect(() => {
     const fetchHeroSettings = async () => {
       try {
-        const response = await api.get("/admin/settings");
+        // ✨ 핵심 1: 브라우저가 옛날 데이터를 기억하지 못하도록 캐시 방지 파라미터(?_t=시간) 추가!
+        const response = await api.get(`/admin/settings?_t=${new Date().getTime()}`);
         if (response.data) {
           setRecruitmentText(response.data.recruitmentText);
           setApplyLink(response.data.applyLink);
+          
+          // 받아온 최신 데이터를 로컬 스토리지에도 안전하게 업데이트
+          localStorage.setItem("heroRecruitmentText", response.data.recruitmentText);
+          localStorage.setItem("heroApplyLink", response.data.applyLink);
         }
       } catch (error) {
         console.error("Hero 설정을 불러오는 데 실패했습니다.", error);
@@ -40,13 +45,20 @@ export const Hero = ({ isAdmin }: { isAdmin: boolean }) => {
 
     if (isAdmin) {
       try {
-        await api.post("/admin/settings", {
+        const response = await api.post("/admin/settings", {
           recruitmentText: text,
           applyLink: link
         });
-        console.log("백엔드 저장 완료");
+        
+        // ✨ 핵심 2: 백엔드가 진짜로 저장을 성공했는지 팝업으로 명확하게 알려주기!
+        if (response.data && response.data.status === "success") {
+          alert("메인 화면 설정이 서버에 완벽하게 저장되었습니다! ✅");
+        } else {
+          alert(`저장 실패: 백엔드 오류 (${response.data.message})`);
+        }
       } catch (error) {
         console.error("백엔드 저장 실패", error);
+        alert("서버 통신 오류로 인해 설정이 저장되지 않았습니다. 🚨");
       }
     }
   };
@@ -184,8 +196,8 @@ export const Hero = ({ isAdmin }: { isAdmin: boolean }) => {
             {isAdmin && (
               <button 
                 onClick={() => {
-                    if (isEditingLink) handleLinkSubmit();
-                    else setIsEditingLink(true);
+                  if (isEditingLink) handleLinkSubmit();
+                  else setIsEditingLink(true);
                 }}
                 className={`p-3 md:p-4 rounded-xl border transition-all ${isEditingLink ? "bg-indigo-600 text-white border-indigo-600 shadow-lg" : "bg-white text-slate-300 border-slate-100 hover:text-indigo-600 shadow-sm"}`}
               >

@@ -162,8 +162,9 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                     </div>
                     <div className="flex items-center gap-1 md:gap-1.5">
                       <MessageSquare className="w-3.5 h-3.5 md:w-4 md:h-4 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+                      {/* ✨ 핵심 수정: commentCount, commentsList.length 등 백엔드 변수명에 맞게 유연하게 가져옵니다! */}
                       <span className="text-[10px] md:text-xs font-black tracking-tighter">
-                        {post.comments?.toLocaleString() || 0}
+                        {(post.commentCount || post.commentsList?.length || post.comments?.length || 0).toLocaleString()}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 md:gap-1.5">

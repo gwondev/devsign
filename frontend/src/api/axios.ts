@@ -27,15 +27,26 @@ api.interceptors.response.use(
         return response;
     },
     (error) => {
-        // 백엔드가 401/403을 반환할 수 있으나, 전역에서 강제 로그아웃 시키지 않고 
-        // 개별 컴포넌트에서 에러를 확인하여 얼럿을 띄울 수 있게 넘깁니다.
-        // 계정이 정지된 경우에만 전역 처리.
-        if (error.response && error.response.data?.status === "suspended") {
-            const isLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-            if (isLoggedIn) {
-                alert("관리자에 의해 정지된 계정입니다. 다시 로그인해주세요.");
-                localStorage.clear();
-                window.location.href = "/login";
+        if (error.response) {
+            // 1. 기존: 계정이 정지된 경우에만 전역 처리 (유지)
+            if (error.response.data?.status === "suspended") {
+                const isLoggedIn = localStorage.getItem("isLoggedIn") === "true";
+                if (isLoggedIn) {
+                    alert("관리자에 의해 정지된 계정입니다. 다시 로그인해주세요.");
+                    localStorage.clear();
+                    window.location.href = "/login";
+                }
+            }
+            // ✨ 2. 수정: 매번 F12로 개발자 도구에서 지우는 귀찮음을 해결하는 401/403 자동 청소!
+            else if (error.response.status === 401 || error.response.status === 403) {
+                // ✨ 핵심 수정: 브라우저에 토큰(token)이 있는 사람만 알림을 띄우고 쫓아냅니다!
+                // 애초에 로그인을 안 한 손님(token이 null)은 알림 없이 조용히 에러만 넘깁니다.
+                const token = localStorage.getItem("token");
+                if (token) {
+                    alert("인증이 만료되었거나 유효하지 않습니다. 다시 로그인해주세요. 🔄");
+                    localStorage.clear(); 
+                    window.location.href = "/login";
+                }
             }
         }
         return Promise.reject(error);

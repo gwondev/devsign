@@ -20,6 +20,10 @@ export const ProfilePage = ({ onNavigate, user, setUser, posts = [] }: any) => {
   const [isEditing, setIsEditing] = useState(false);
   const [isPwModalOpen, setIsPwModalOpen] = useState(false); 
   
+  // ✨ 디스코드 인증을 위한 추가 상태값
+  const [authCode, setAuthCode] = useState("");
+  const [isCodeSent, setIsCodeSent] = useState(false);
+  
   const userPostsCount = useMemo(() => {
     if (!user || !posts) return 0;
     return posts.filter((p: any) => p.loginId === user.loginId).length;
@@ -55,11 +59,58 @@ export const ProfilePage = ({ onNavigate, user, setUser, posts = [] }: any) => {
     }
   }, [user]);
 
-  const handleSave = async () => {
+  // ✨ 디스코드 변경 취소 처리 (초기화)
+  const handleCancel = () => {
+    setIsEditing(false);
+    setAuthCode("");
+    setIsCodeSent(false);
+    setUserInfo({
+      ...userInfo,
+      major: user?.dept || "AI소프트웨어학부(컴퓨터공학전공)",
+      discord: user?.discordTag || "디스코드 미연동"
+    });
+  };
+
+  // ✨ 디스코드 봇으로 인증번호 전송 요청
+  const handleSendDiscordCode = async () => {
+    if (!userInfo.discord || userInfo.discord.trim() === "") {
+      return alert("변경할 디스코드 태그를 입력해주세요.");
+    }
+    
     try {
+      const response = await api.post("/members/discord-send", { discordTag: userInfo.discord });
+      if (response.data.status === "success") {
+        alert("인증번호가 새로운 디스코드 계정 DM으로 전송되었습니다! 📩");
+        setIsCodeSent(true);
+      } else {
+        alert(response.data.message || "해당 디스코드 사용자를 찾을 수 없거나 메시지를 보낼 수 없습니다. 태그가 올바른지 확인해주세요.");
+      }
+    } catch (error) {
+      console.error("인증번호 전송 실패:", error);
+      alert("서버 오류로 인해 인증번호를 전송할 수 없습니다.");
+    }
+  };
+
+  const handleSave = async () => {
+    // 디스코드 태그가 기존과 다른지 체크
+    const originalDiscord = user?.discordTag || "디스코드 미연동";
+    const isDiscordChanged = userInfo.discord !== originalDiscord;
+
+    // 태그가 바뀌었는데 인증번호를 입력하지 않았다면 차단!
+    if (isDiscordChanged) {
+      if (!authCode || authCode.length !== 6) {
+        alert("디스코드 계정이 변경되었습니다. '인증번호 받기'를 눌러 DM으로 받은 6자리 코드를 입력해주세요. ⚠️");
+        return;
+      }
+    }
+
+    try {
+      // ✨ 변경된 파라미터(authCode)를 백엔드 쿼리로 안전하게 넘겨줍니다
       const response = await api.put(`/members/update/${user.loginId}`, {
         dept: userInfo.major,
         discordTag: userInfo.discord
+      }, {
+        params: isDiscordChanged ? { authCode: authCode.trim() } : {}
       });
 
       if (response.data.status === "success") {
@@ -74,12 +125,19 @@ export const ProfilePage = ({ onNavigate, user, setUser, posts = [] }: any) => {
 
         alert("모든 정보가 안전하게 저장되었습니다! ✅");
         setIsEditing(false);
+        setAuthCode("");
+        setIsCodeSent(false);
       } else {
         alert(response.data.message || "저장에 실패했습니다.");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("저장 실패:", error);
-      alert("서버 저장 중 오류가 발생했습니다.");
+      // 서버에서 보낸 에러 메시지(예: 잘못된 인증번호)가 있다면 그대로 표출
+      if (error.response && error.response.data && error.response.data.message) {
+        alert(error.response.data.message);
+      } else {
+        alert("서버 저장 중 오류가 발생했습니다.");
+      }
     }
   };
 
@@ -191,7 +249,7 @@ export const ProfilePage = ({ onNavigate, user, setUser, posts = [] }: any) => {
                 <Button onClick={() => setIsEditing(true)} className="bg-slate-900 text-white rounded-xl md:rounded-2xl px-4 md:px-8 font-black py-3 md:py-6 shadow-lg text-xs md:text-sm h-auto">정보 수정</Button>
               ) : (
                 <div className="flex gap-2">
-                  <Button onClick={() => setIsEditing(false)} variant="outline" className="rounded-xl md:rounded-2xl px-3 md:px-6 py-3 md:py-6 font-black border-slate-200 text-slate-400 text-xs md:text-sm h-auto">취소</Button>
+                  <Button onClick={handleCancel} variant="outline" className="rounded-xl md:rounded-2xl px-3 md:px-6 py-3 md:py-6 font-black border-slate-200 text-slate-400 text-xs md:text-sm h-auto">취소</Button>
                   <Button onClick={handleSave} className="bg-indigo-600 text-white rounded-xl md:rounded-2xl px-4 md:px-8 py-3 md:py-6 font-black shadow-lg text-xs md:text-sm h-auto">저장 완료</Button>
                 </div>
               )}
@@ -212,8 +270,49 @@ export const ProfilePage = ({ onNavigate, user, setUser, posts = [] }: any) => {
                 value={userInfo.discord} 
                 icon={<MessageSquare className="w-4 h-4 md:w-[18px] md:h-[18px]" />} 
                 isEditing={isEditing} 
-                onChange={(val: string) => setUserInfo({...userInfo, discord: val})} 
+                onChange={(val: string) => {
+                  setUserInfo({...userInfo, discord: val});
+                  setIsCodeSent(false); // 태그가 한 글자라도 바뀌면 재인증 필요
+                }} 
               />
+              
+              {/* ✨ 디스코드 태그가 변경되었을 때만 나타나는 인증 블록 */}
+              <AnimatePresence>
+                {isEditing && userInfo.discord !== (user?.discordTag || "디스코드 미연동") && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10, height: 0 }}
+                    animate={{ opacity: 1, y: 0, height: "auto" }}
+                    exit={{ opacity: 0, y: -10, height: 0 }}
+                    className="col-span-1 md:col-span-2 overflow-hidden"
+                  >
+                    <div className="bg-indigo-50/50 p-4 md:p-6 rounded-2xl md:rounded-[1.5rem] border border-indigo-100 flex flex-col md:flex-row gap-3 md:gap-4 items-end">
+                      <div className="flex-1 w-full space-y-2 md:space-y-3">
+                        <label className="text-[10px] md:text-xs font-black text-indigo-600 uppercase ml-1 tracking-widest flex items-center gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 md:w-4 md:h-4" /> 새로운 계정 본인 인증
+                        </label>
+                        <div className="flex flex-col sm:flex-row gap-2 md:gap-3">
+                          <input 
+                            type="text" 
+                            placeholder={isCodeSent ? "DM으로 받은 6자리 인증번호" : "먼저 우측 버튼을 눌러주세요"}
+                            value={authCode}
+                            onChange={e => setAuthCode(e.target.value)}
+                            disabled={!isCodeSent}
+                            maxLength={6}
+                            className="w-full sm:flex-1 p-3.5 md:p-4 bg-white rounded-xl md:rounded-2xl border border-slate-100 outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-sm disabled:bg-slate-50 disabled:text-slate-400 transition-all shadow-sm"
+                          />
+                          <Button 
+                            onClick={handleSendDiscordCode}
+                            type="button"
+                            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl md:rounded-2xl px-6 py-3.5 md:py-4 shadow-md transition-all h-auto shrink-0"
+                          >
+                            {isCodeSent ? "재전송 요청" : "인증번호 받기"}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             <div className="p-5 md:p-8 bg-slate-50 rounded-2xl md:rounded-[2rem] border border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 md:gap-6 mt-auto">

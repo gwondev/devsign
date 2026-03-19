@@ -11,6 +11,7 @@ export const BoardDetail = ({
   onNavigate,
   post,
   isLoggedIn,
+  isAdmin, // ✨ 추가: 부모(App.tsx)로부터 받은 isAdmin 권한
   user,
   setPost,
   onDelete,
@@ -46,7 +47,9 @@ export const BoardDetail = ({
   if (!post) return <div className="pt-40 text-center text-slate-400 font-bold">게시글을 찾을 수 없습니다.</div>;
 
   const isAuthor = isLoggedIn && post.loginId === user?.loginId;
-  const canDelete = isAuthor;
+  // ✨ 핵심 수정 1: 작성자거나(isAuthor), 관리자(isAdmin)면 삭제 권한 획득!
+  const canDelete = isAuthor || isAdmin; 
+  // 수정은 여전히 본인(작성자)만 가능하도록 유지 (관리자라도 남의 글 수정은 안 됨)
   const canEdit = isAuthor;
 
   const formatStudentId = (id: string) => {
@@ -216,6 +219,7 @@ export const BoardDetail = ({
                     comment={c}
                     postId={post.id}
                     isLoggedIn={isLoggedIn}
+                    isAdmin={isAdmin} // ✨ 추가: 자식 컴포넌트에게도 관리자 권한 넘기기
                     currentUser={user}
                     onDelete={() => onDeleteComment(post.id, c.id)}
                     onToggleCommentLike={(commentId: number) => onToggleCommentLike(post.id, commentId)}
@@ -240,6 +244,7 @@ const CommentItem = ({
   comment,
   postId,
   currentUser,
+  isAdmin, // ✨ 추가: 관리자 권한 변수 받기
   onDelete,
   onToggleCommentLike,
   onAddReply,
@@ -251,8 +256,9 @@ const CommentItem = ({
   const [replyContent, setReplyContent] = useState("");
   const [showAllReplies, setShowAllReplies] = useState(false);
 
+  // ✨ 핵심 수정 2: 댓글/대댓글 삭제도 작성자거나 관리자면 가능!
   const canDelete = (item: any) =>
-    Boolean(currentUser?.loginId) && Boolean(item?.loginId) && item.loginId === currentUser.loginId;
+    isAdmin || (Boolean(currentUser?.loginId) && Boolean(item?.loginId) && item.loginId === currentUser.loginId);
 
   const replies = comment.replies || [];
   const visibleReplies = showAllReplies ? replies : replies.slice(-2);

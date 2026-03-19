@@ -53,9 +53,14 @@ public class MemberController {
         return memberService.logoutLog(requestData, request.getRemoteAddr());
     }
 
+    // ✨ [수정 완료] 프론트엔드에서 쿼리 파라미터로 날아올 인증번호(authCode)를 받아서 Service(주방장)로 넘겨줍니다!
     @PutMapping("/update/{loginId}")
-    public StatusResponse updateMember(@PathVariable String loginId, @RequestBody UpdateMemberRequest updateData) {
-        return memberService.updateMember(loginId, updateData);
+    public StatusResponse updateMember(
+            @PathVariable String loginId, 
+            @RequestBody UpdateMemberRequest updateData,
+            @RequestParam(required = false) String authCode
+    ) {
+        return memberService.updateMember(loginId, updateData, authCode);
     }
 
     @PutMapping("/change-password/{loginId}")

@@ -64,6 +64,11 @@ public class MemberService {
         DiscordAuth auth = discordAuthRepository.findByCode(authCode)
                 .orElseThrow(() -> new RuntimeException("invalid or expired auth code"));
 
+        // ✨ [추가] 1. 회원가입 시 디스코드 중복 가입 완벽 차단
+        if (memberRepository.findByDiscordTag(auth.getDiscordTag()).isPresent()) {
+            throw new RuntimeException("이미 가입된 디스코드 계정입니다. 다른 계정으로 인증해주세요.");
+        }
+
         Map<String, String> discordInfo = parseDiscordNickname(auth.getDiscordNickname());
 
         Member member = new Member();
@@ -143,7 +148,6 @@ public class MemberService {
 
             String avatarUrl = DEFAULT_AVATAR_URL;
             try {
-                // 수정된 부분: 하드코딩된 URL(127.0.0.1) 호출을 제거하고 discordBotClient를 통해 통신하도록 변경
                 Map<String, Object> botResponse = discordBotClient.getAvatar(m.getDiscordTag());
                 if (botResponse != null && "success".equals(botResponse.get("status"))) {
                     avatarUrl = asString(botResponse.get("avatarUrl"));
@@ -186,25 +190,41 @@ public class MemberService {
         return StatusResponse.success();
     }
 
-    public StatusResponse updateMember(String loginId, UpdateMemberRequest updateData) {
+    // ✨ [추가] 2. 프로필 변경 시 인증번호(authCode)를 받아서 검증하도록 파라미터 및 로직 추가
+    public StatusResponse updateMember(String loginId, UpdateMemberRequest updateData, String authCode) {
         Optional<Member> memberOpt = memberRepository.findByLoginId(loginId);
         if (memberOpt.isEmpty()) {
             return StatusResponse.fail("member not found");
         }
 
+        Member member = memberOpt.get();
         String newDiscordTag = updateData.discordTag();
 
-        try {
-            Map<String, Object> botRes = discordBotClient.checkMember(newDiscordTag);
-            boolean exists = botRes != null && Boolean.TRUE.equals(botRes.get("exists"));
-            if (!exists) {
-                return StatusResponse.fail("discord member not found");
+        // 사용자가 디스코드 태그를 변경하려고 시도할 때만 검증 로직 실행
+        if (newDiscordTag != null && !newDiscordTag.equals(member.getDiscordTag())) {
+            
+            // 1단계: 변경하려는 디스코드 태그가 이미 다른 회원의 것인지 중복 검사
+            if (memberRepository.findByDiscordTag(newDiscordTag).isPresent()) {
+                return StatusResponse.fail("이미 다른 사용자가 등록한 디스코드 계정입니다.");
             }
-        } catch (Exception e) {
-            return StatusResponse.error("discord verification failed");
+
+            // 2단계: 인증번호 필수 확인
+            if (authCode == null || authCode.trim().isEmpty()) {
+                return StatusResponse.fail("디스코드 계정 변경을 위한 인증번호가 필요합니다.");
+            }
+
+            // 3단계: 인증번호 일치 여부 및 만료 확인
+            Optional<DiscordAuth> authOpt = discordAuthRepository.findByCode(authCode);
+            if (authOpt.isEmpty() || 
+                !authOpt.get().getDiscordTag().equals(newDiscordTag) || 
+                authOpt.get().getExpiry().isBefore(LocalDateTime.now())) {
+                return StatusResponse.fail("유효하지 않거나 만료된 인증번호입니다.");
+            }
+
+            // 인증 완료 후 사용된 인증 코드는 즉시 폐기
+            discordAuthRepository.delete(authOpt.get());
         }
 
-        Member member = memberOpt.get();
         member.setDept(updateData.dept());
         member.setDiscordTag(newDiscordTag);
         memberRepository.save(member);

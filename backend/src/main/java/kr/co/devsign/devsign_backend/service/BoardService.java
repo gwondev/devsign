@@ -112,7 +112,7 @@ public class BoardService {
     @Transactional
     public PostResponse updatePost(Long id, UpdatePostRequest payload, List<MultipartFile> files, String loginId, String ip) {
         Post post = postRepository.findById(id).orElseThrow();
-        validatePostOwnership(post, loginId);
+        validatePostOwnership(post, loginId); // 수정은 무조건 본인만!
 
         post.setTitle(payload.title());
         post.setContent(payload.content());
@@ -156,7 +156,15 @@ public class BoardService {
     @Transactional
     public StatusResponse deletePost(Long id, String loginId, String ip) {
         Post post = postRepository.findById(id).orElseThrow();
-        validatePostOwnership(post, loginId);
+        
+        // ✨ 핵심 추가: 관리자(ADMIN) 권한 확인!
+        Member member = memberRepository.findByLoginId(loginId).orElse(null);
+        boolean isAdmin = member != null && "ADMIN".equals(member.getRole());
+
+        // 관리자가 아니라면 기존처럼 본인 글인지 확인합니다. (관리자는 프리패스!)
+        if (!isAdmin) {
+            validatePostOwnership(post, loginId);
+        }
 
         postLikeRepository.deleteByPost(post);
         postViewRepository.deleteByPost(post);
@@ -238,7 +246,19 @@ public class BoardService {
     @Transactional
     public PostResponse deleteComment(Long postId, Long commentId, String loginId, String ip) {
         Comment comment = commentRepository.findById(commentId).orElseThrow();
-        validateCommentOwnership(postId, comment, loginId);
+
+        // ✨ 핵심 추가: 관리자(ADMIN) 권한 확인!
+        Member member = memberRepository.findByLoginId(loginId).orElse(null);
+        boolean isAdmin = member != null && "ADMIN".equals(member.getRole());
+
+        if (!isAdmin) {
+            validateCommentOwnership(postId, comment, loginId); // 관리자가 아니면 작성자 검증
+        } else {
+            // 관리자라도 요청된 URL의 postId와 실제 지우려는 댓글의 게시글이 일치하는지 기본 검증은 수행
+            if (comment.getPost() == null || !comment.getPost().getId().equals(postId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "해당 게시글의 댓글이 아닙니다.");
+            }
+        }
 
         List<Comment> deleteTargets = new ArrayList<>();
         collectCommentsForDelete(comment, deleteTargets);

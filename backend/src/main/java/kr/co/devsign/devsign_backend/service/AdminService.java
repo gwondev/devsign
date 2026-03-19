@@ -1,5 +1,7 @@
 package kr.co.devsign.devsign_backend.service;
 
+import jakarta.annotation.PostConstruct; // ✨ 추가: 서버 켜질 때 자동 실행 도구
+import jakarta.persistence.EntityManager; // ✨ 추가: DB 데이터를 직접 안전하게 수정하기 위한 도구
 import jakarta.transaction.Transactional;
 import kr.co.devsign.devsign_backend.dto.admin.AccessLogResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminMemberResponse;
@@ -39,6 +41,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties; // ✨ 추가: 자바 내장 설정 파일 도구
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipEntry;
@@ -58,6 +61,10 @@ public class AdminService {
     private final AccessLogService accessLogService;
     private final DiscordBotClient discordBotClient;
     private final BCryptPasswordEncoder passwordEncoder;
+    
+    // ✨ 추가: Repository가 없는 엔티티(Post, Comment)를 직접 조작하기 위해 EntityManager 주입
+    private final EntityManager entityManager; 
+    
     @Value("${app.upload.base-dir:uploads}")
     private String uploadBaseDir;
 
@@ -66,6 +73,32 @@ public class AdminService {
     static {
         heroSettings.put("recruitmentText", "2026 recruitment open");
         heroSettings.put("applyLink", "https://open.kakao.com/o/example");
+    }
+
+    // ✨ 핵심 3: 서버가 켜질 때마다 안전한 uploads 폴더에서 설정 파일을 읽어옵니다.
+    @PostConstruct
+    public void initSettings() {
+        try {
+            File uploadDir = getUploadBasePath().toFile();
+            if (!uploadDir.exists()) {
+                uploadDir.mkdirs();
+            }
+            File file = getUploadBasePath().resolve("hero_settings.properties").toFile();
+            if (file.exists()) {
+                Properties props = new Properties();
+                try (FileInputStream in = new FileInputStream(file)) {
+                    props.load(in);
+                    if (props.containsKey("recruitmentText")) {
+                        heroSettings.put("recruitmentText", props.getProperty("recruitmentText"));
+                    }
+                    if (props.containsKey("applyLink")) {
+                        heroSettings.put("applyLink", props.getProperty("applyLink"));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to load hero settings: " + e.getMessage());
+        }
     }
 
     public List<AdminMemberResponse> getAllMembers() {
@@ -100,6 +133,23 @@ public class AdminService {
     public StatusResponse updateHeroSettings(HeroSettingsRequest settings) {
         heroSettings.put("recruitmentText", settings.recruitmentText());
         heroSettings.put("applyLink", settings.applyLink());
+        
+        // ✨ 핵심 4: 메모리가 아닌 도커 볼륨(uploads 폴더)의 실제 파일에 영구 저장합니다.
+        try {
+            File uploadDir = getUploadBasePath().toFile();
+            if (!uploadDir.exists()) {
+                uploadDir.mkdirs();
+            }
+            File file = getUploadBasePath().resolve("hero_settings.properties").toFile();
+            Properties props = new Properties();
+            props.putAll(heroSettings);
+            try (FileOutputStream out = new FileOutputStream(file)) {
+                props.store(out, "DEVSIGN Hero Settings");
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to save hero settings: " + e.getMessage());
+            return StatusResponse.fail("save error: " + e.getMessage());
+        }
         return StatusResponse.success();
     }
 
@@ -349,25 +399,65 @@ public class AdminService {
         }
     }
 
+    // ✨ 핵심 변경 사항: 영구 삭제 시 관련 데이터를 먼저 '탈퇴한 사용자'로 덮어쓰도록 트랜잭션 추가
+    @Transactional
     public StatusResponse deleteMember(Long id, boolean hard, String ip) {
-        return memberRepository.findById(id)
-                .map(m -> {
-                    accessLogService.logByMember(
-                            m,
-                            hard ? "ACCOUNT_PERMANENT_DELETE" : "ACCOUNT_DELETE",
-                            ip
-                    );
+        try {
+            return memberRepository.findById(id)
+                    .map(m -> {
+                        accessLogService.logByMember(
+                                m,
+                                hard ? "ACCOUNT_PERMANENT_DELETE" : "ACCOUNT_DELETE",
+                                ip
+                        );
 
-                    if (hard) {
-                        memberRepository.deleteById(id);
-                    } else {
-                        m.setDeleted(true);
-                        m.setDeletedAt(LocalDateTime.now());
-                        memberRepository.save(m);
-                    }
-                    return StatusResponse.success();
-                })
-                .orElseGet(() -> StatusResponse.fail("member not found"));
+                        if (hard) {
+                            String loginId = m.getLoginId();
+                            
+                            // ✨ [핵심 해결] 0. 6명의 범인! 삭제를 가로막는 좋아요/조회수 찌꺼기 기록 일괄 삭제 (직접 SQL 쿼리 실행)
+                            entityManager.createNativeQuery("DELETE FROM comment_likes WHERE member_id = :memberId")
+                                    .setParameter("memberId", id)
+                                    .executeUpdate();
+                            entityManager.createNativeQuery("DELETE FROM event_like WHERE member_id = :memberId")
+                                    .setParameter("memberId", id)
+                                    .executeUpdate();
+                            entityManager.createNativeQuery("DELETE FROM event_view WHERE member_id = :memberId")
+                                    .setParameter("memberId", id)
+                                    .executeUpdate();
+                            entityManager.createNativeQuery("DELETE FROM notice_view WHERE member_id = :memberId")
+                                    .setParameter("memberId", id)
+                                    .executeUpdate();
+                            entityManager.createNativeQuery("DELETE FROM post_likes WHERE member_id = :memberId")
+                                    .setParameter("memberId", id)
+                                    .executeUpdate();
+                            entityManager.createNativeQuery("DELETE FROM post_views WHERE member_id = :memberId")
+                                    .setParameter("memberId", id)
+                                    .executeUpdate();
+
+                            // 1. 작성한 게시글을 '탈퇴한 사용자'로 익명화
+                            entityManager.createQuery("UPDATE Post p SET p.author = '탈퇴한 사용자', p.loginId = 'deleted_user', p.studentId = '', p.profileImage = null WHERE p.loginId = :loginId")
+                                    .setParameter("loginId", loginId)
+                                    .executeUpdate();
+
+                            // 2. 작성한 댓글을 '탈퇴한 사용자'로 익명화
+                            entityManager.createQuery("UPDATE Comment c SET c.author = '탈퇴한 사용자', c.loginId = 'deleted_user', c.studentId = '', c.profileImage = null WHERE c.loginId = :loginId")
+                                    .setParameter("loginId", loginId)
+                                    .executeUpdate();
+
+                            // 3. 흔적 정리가 모두 끝났으므로 안심하고 회원을 삭제합니다.
+                            memberRepository.deleteById(id);
+                        } else {
+                            m.setDeleted(true);
+                            m.setDeletedAt(LocalDateTime.now());
+                            memberRepository.save(m);
+                        }
+                        return StatusResponse.success();
+                    })
+                    .orElseGet(() -> StatusResponse.fail("member not found"));
+        } catch (Exception e) {
+            // 에러가 나더라도 어떤 에러인지 프론트엔드로 정확히 반환합니다.
+            return StatusResponse.fail("delete error: " + e.getMessage());
+        }
     }
 
     public StatusResponse verifyAdminPassword(Authentication authentication, AdminPasswordVerifyRequest request) {

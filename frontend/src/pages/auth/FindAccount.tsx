@@ -132,10 +132,10 @@ export const FindAccount = ({ onNavigate }: { onNavigate: (page: string) => void
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 ml-1 uppercase">학번 (8자리)</label>
+                    <label className="text-xs font-black text-slate-400 ml-1 uppercase">학번 (2자리)</label>
                     <div className="relative">
                       <Hash className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-                      <input type="text" value={formData.studentId} onChange={(e) => setFormData({...formData, studentId: e.target.value})} placeholder="20261234" className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                      <input type="text" value={formData.studentId} onChange={(e) => setFormData({...formData, studentId: e.target.value})} placeholder="26" className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
                     </div>
                   </div>
                   <div className="space-y-2">

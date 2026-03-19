@@ -94,16 +94,18 @@ export const Board = ({ onNavigate, posts }: BoardSectionProps) => {
                 {/* 하단 스태츠 영역: 조회수, 댓글수, 좋아요수 */}
                 <div className="flex items-center gap-2.5 md:gap-3 text-slate-300 font-bold text-[10px] md:text-[11px] shrink-0">
                   <div className="flex items-center gap-1 group-hover:text-slate-500 transition-colors">
-                    <Eye className="w-3.5 h-3.5 md:w-[14px] md:h-[14px]" /> {post.views || 0}
+                    <Eye className="w-3.5 h-3.5 md:w-[14px] md:h-[14px]" /> {post.views?.toLocaleString() || 0}
                   </div>
                   <div className="flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
-                    <MessageSquare className="w-3.5 h-3.5 md:w-[14px] md:h-[14px]" /> {post.comments?.length || post.commentCount || 0}
+                    <MessageSquare className="w-3.5 h-3.5 md:w-[14px] md:h-[14px]" /> 
+                    {/* ✨ 핵심 수정: commentsList 등 백엔드 변수명에 맞게 유연하게 가져옵니다! */}
+                    {(post.commentCount || post.commentsList?.length || post.comments?.length || 0).toLocaleString()}
                   </div>
                   <div className="flex items-center gap-1 group-hover:text-rose-500 transition-colors">
                     <Heart 
                       className={`w-3.5 h-3.5 md:w-[14px] md:h-[14px] ${(post.likes || 0) > 0 ? "fill-rose-500 text-rose-500" : ""}`} 
                     /> 
-                    {post.likes || 0}
+                    {post.likes?.toLocaleString() || 0}
                   </div>
                 </div>
               </div>

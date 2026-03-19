@@ -257,6 +257,7 @@ function AppContent() {
           isLoggedIn={isLoggedIn}
           onLogout={() => handleLogout(false)}
           userRole={isAdmin ? "ADMIN" : "USER"}
+          user={currentUser} // ✨ 핵심 1: Navbar에 user 데이터를 명시적으로 넘겨줍니다!
         />
       )}
 
@@ -264,7 +265,24 @@ function AppContent() {
         <Routes>
           <Route path="/" element={<Home isAdmin={isAdmin && isLoggedIn} isLoggedIn={isLoggedIn} events={events} notices={notices} posts={posts} onNavigate={handleNavigateCompat} />} />
 
-          <Route path="/login" element={<Login onNavigate={handleNavigateCompat} onLoginSuccess={(userData: any) => { setIsLoggedIn(true); setIsAdmin(userData.role === "ADMIN"); setCurrentUser(userData); navigate("/"); }} />} />
+          {/* ✨ 핵심 2: 로그인 성공 시 상태(State)와 LocalStorage를 동시에 즉시 업데이트하도록 수정 */}
+          <Route path="/login" element={
+            <Login 
+              onNavigate={handleNavigateCompat} 
+              onLoginSuccess={(userData: any) => { 
+                setIsLoggedIn(true); 
+                setIsAdmin(userData.role === "ADMIN"); 
+                setCurrentUser(userData); 
+                
+                // 로그인 즉시 로컬스토리지에도 저장하여 새로고침 없는 실시간 렌더링 지원!
+                localStorage.setItem("isLoggedIn", "true");
+                localStorage.setItem("currentUser", JSON.stringify(userData));
+                
+                navigate("/"); 
+              }} 
+            />
+          } />
+          
           <Route path="/signup" element={<Signup onNavigate={handleNavigateCompat} />} />
           <Route path="/find-account" element={<FindAccount onNavigate={handleNavigateCompat} />} />
           <Route path="/signup-success" element={<SignupSuccess onNavigate={handleNavigateCompat} />} />
