@@ -136,7 +136,7 @@
 #### **1단계: 프로젝트 클론**
 
 ```bash
-git clone https://github.com/yourorg/devsign.git
+git clone https://github.com/gwondev/devsign
 cd devsign
 ```
 
