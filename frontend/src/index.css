@@ -2,4 +2,481 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 추가적인 강제 스타일은 모두 지워주세요! */
+@layer base {
+  :root {
+    color: #1d1d1f;
+    background: #f5f5f7;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background: #f5f5f7;
+    /* ✨ [2026-09-30] 스크롤바 자리를 항상 유지 — 페이지가 짧아(OJ·관리) 스크롤바가 사라지거나, 총회처럼 처음엔 짧았다가
+       길어지면 화면 폭이 바뀌어 고정된 상단 바의 로고·프로필이 좌우로 움직였다. (scrollbar-gutter는 고정 요소엔 안 먹힘)
+       가로 넘침 숨김은 body 대신 여기서 — body에 두면 body가 스크롤 상자가 되어 sticky가 깨진다. */
+    overflow-x: hidden;
+    overflow-y: scroll;
+    /* ✨ [2026-09-30] 맨 위·맨 아래에서 더 당길 때 생기는 고무줄(바운스) 스크롤을 끈다 — 바운스 중에 상단 바의
+       흰 알약들이 따로 그려지면서 위에서 하얀색이 내려오는 것처럼 보이던 문제 */
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    overflow-x: clip;
+    background:
+      radial-gradient(circle at 10% -10%, rgb(82 167 255 / 0.10), transparent 30rem),
+      #f5f5f7;
+    color: #1d1d1f;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  a {
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 3px solid rgb(0 113 227 / 0.28);
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background: #d9edff;
+    color: #07529f;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: rgb(110 110 115 / 0.36);
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .apple-glass {
+    border: 1px solid rgb(255 255 255 / 0.62);
+    background: rgb(255 255 255 / 0.72);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.02), 0 16px 45px rgb(0 0 0 / 0.06);
+    -webkit-backdrop-filter: saturate(180%) blur(22px);
+    backdrop-filter: saturate(180%) blur(22px);
+  }
+
+  .apple-surface {
+    border: 1px solid rgb(0 0 0 / 0.055);
+    background: rgb(255 255 255 / 0.92);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.025), 0 18px 48px rgb(0 0 0 / 0.055);
+  }
+
+  .liquid-glass {
+    position: relative;
+    border: 1px solid rgb(255 255 255 / 0.78);
+    background:
+      linear-gradient(135deg, rgb(255 255 255 / 0.82), rgb(255 255 255 / 0.48));
+    /* ✨ [2026-09-29] 그림자 약하게 — 떠 있는 느낌만 살짝 */
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.92),
+      inset 0 -1px 0 rgb(255 255 255 / 0.30),
+      0 1px 0 rgb(0 0 0 / 0.035),
+      0 6px 20px rgb(31 38 50 / 0.04);
+    -webkit-backdrop-filter: saturate(190%) blur(28px);
+    backdrop-filter: saturate(190%) blur(28px);
+  }
+
+  /* ✨ [2026-09-29] 상단 바 알약(메뉴 선택 표시·프로필·로그아웃·회원가입) — 반사광/그라데이션 없이 단순하게:
+     흰 단색 + 아주 얇은 테두리 + 거의 안 보이는 그림자. */
+  .glass-lens {
+    background: #ffffff;
+    box-shadow:
+      0 0 0 0.5px rgb(0 0 0 / 0.08),
+      0 1px 2px rgb(0 0 0 / 0.05);
+  }
+
+  /* ✨ [2026-09-30] 상단 바 선택 알약 — 세 조각(원·막대·원)을 transform으로만 옮겨 GPU에서 부드럽게 움직인다.
+     메인 스레드가 새 페이지를 그리느라 바빠도 끊기지 않는다.
+     테두리는 조각마다 box-shadow로 그리면 좁은 알약(홈)에서 안쪽 원의 테두리가 비쳐 원이 두 개 겹쳐 보였다 —
+     회색 조각층을 아래에 0.5px 크게 깔고 흰 조각층을 위에 올려, 바깥 윤곽에만 테두리가 남게 한다. */
+  .nav-pill {
+    filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.06));
+    transition: opacity 200ms ease;
+  }
+
+  .nav-pill > span {
+    position: absolute;
+    left: 0;
+    top: 0;
+    background: #ffffff;
+    transform-origin: 0 50%;
+    backface-visibility: hidden;
+  }
+
+  .nav-pill.is-ready > span {
+    /* 목표를 지나치지 않는 감속 곡선 — 지나쳤다 돌아오면 좁은 메뉴(홈)로 올 때 양 끝 원이 순간 엇갈린다 */
+    transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .nav-pill-cap {
+    border-radius: 9999px;
+  }
+
+  /* 테두리 층은 불투명한 옅은 회색 — 반투명이면 조각이 겹치는 곳만 진해진다 */
+  .nav-pill > .nav-pill-edge {
+    background: #e2e2e6;
+  }
+
+  /* 가운데 막대: 기준 폭 100px을 scaleX로 늘이고 줄인다 */
+  .nav-pill-mid {
+    width: 100px;
+  }
+
+  /* ✨ [2026-09-30] 프로필·활동 대시보드 — 리퀴드 글라스 카드. 반투명 흰색 + 강한 배경 흐림 + 얇은 흰 테두리 +
+     위쪽 가장자리의 은은한 빛(inset) + 옅은 그림자. 뒤에 깐 색 번짐이 비쳐 유리처럼 보인다. */
+  .apple-app .glass-card {
+    background-color: rgb(255 255 255 / 0.6);
+    border: 1px solid rgb(255 255 255 / 0.8);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.9),
+      0 1px 2px rgb(0 0 0 / 0.03),
+      0 18px 44px rgb(30 40 80 / 0.07);
+    -webkit-backdrop-filter: saturate(180%) blur(30px);
+    backdrop-filter: saturate(180%) blur(30px);
+  }
+
+  /* ✨ [2026-09-30] 글 작성 화면(행사·공지·게시판·명예의 전당) — 본문 전체에 걸린 "유리" 규칙이 카드와 입력칸을 모두
+     반투명 유리로 바꿔 박스가 흐릿하게 겹쳐 보였다. 작성 화면(.write-page) 안에서는 애플 스타일로 되돌린다:
+     흰 카드 + 옅은 회색 입력칸(누르면 흰색·파란 테두리), 큰 제목·본문 칸(.bare-field)은 테두리 없이. */
+  .apple-app main div.write-page {
+    background-color: #fff !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+
+  .apple-app main .write-page .bg-white,
+  .apple-app main .write-page [class*="bg-white/"] {
+    background-color: #fff !important;
+    border-color: rgb(0 0 0 / 0.06) !important;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .apple-app main .write-page .bg-slate-50 {
+    background-color: #f5f5f7 !important;
+  }
+
+  .apple-app main .write-page input:not([type="file"]):not([type="checkbox"]):not([type="radio"]),
+  .apple-app main .write-page textarea {
+    background-color: #f5f5f7 !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .apple-app main .write-page input:not([type="file"]):not([type="checkbox"]):not([type="radio"]):focus,
+  .apple-app main .write-page textarea:focus {
+    background-color: #fff !important;
+    box-shadow: 0 0 0 1px rgb(0 113 227 / 0.45), 0 0 0 4px rgb(0 113 227 / 0.12) !important;
+  }
+
+  /* 위 회색 입력칸 규칙(:not(...) 때문에 우선순위가 높다)보다 앞서도록 같은 :not을 붙인다 */
+  .apple-app main .write-page input.bare-field:not([type="file"]):not([type="checkbox"]):not([type="radio"]),
+  .apple-app main .write-page input.bare-field:not([type="file"]):not([type="checkbox"]):not([type="radio"]):focus,
+  .apple-app main .write-page textarea.bare-field,
+  .apple-app main .write-page textarea.bare-field:focus {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* ✨ [2026-09-30] 홈 배너(사진) 위 문구 편집 칸 — 흰 유리 입력칸 대신 어두운 유리 알약이라 흰 글자가 잘 보인다 */
+  .apple-app main input.hero-field,
+  .apple-app main input.hero-field:focus {
+    background-color: rgb(0 0 0 / 0.38) !important;
+    border: 1px solid rgb(255 255 255 / 0.35) !important;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.18) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+    color: #fff;
+  }
+
+  .apple-app main input.hero-field:focus {
+    border-color: rgb(255 255 255 / 0.7) !important;
+  }
+
+  .apple-app main input.hero-field::placeholder {
+    color: rgb(255 255 255 / 0.5);
+  }
+
+  /* 로그인처럼 강조가 필요한 버튼 — 애플 블루 단색 */
+  .glass-lens-blue {
+    color: white;
+    background: #0071e3;
+    transition: background-color 180ms ease;
+  }
+
+  .glass-lens-blue:hover {
+    background: #0077ed;
+  }
+
+  .apple-button {
+    min-height: 44px;
+    border-radius: 999px;
+    background: #0071e3;
+    color: white;
+    font-weight: 700;
+    box-shadow: 0 1px 2px rgb(0 113 227 / 0.18), 0 3px 8px rgb(0 113 227 / 0.14);
+    transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+  }
+
+  .apple-button:hover {
+    background: #0077ed;
+    box-shadow: 0 2px 4px rgb(0 113 227 / 0.2), 0 5px 12px rgb(0 113 227 / 0.16);
+    transform: translateY(-1px);
+  }
+
+  .apple-button:active {
+    box-shadow: 0 1px 2px rgb(0 113 227 / 0.16);
+    transform: scale(0.98);
+  }
+
+  .apple-ambient {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, #fafafa 0%, #f2f2f4 42%, #f7f7f8 100%);
+  }
+
+  .apple-ambient::before,
+  .apple-ambient::after {
+    display: none;
+  }
+
+  /* 기존 Tailwind 표면을 기능 변경 없이 Liquid Glass 재질로 통일한다. */
+  .apple-app main .bg-white,
+  .apple-app main [class*="bg-white/"] {
+    border-color: rgb(255 255 255 / 0.76) !important;
+    background-color: rgb(255 255 255 / 0.62) !important;
+    background-image: linear-gradient(135deg, rgb(255 255 255 / 0.62), rgb(255 255 255 / 0.30)) !important;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.86),
+      0 1px 2px rgb(0 0 0 / 0.025),
+      0 14px 42px rgb(31 38 50 / 0.075);
+    -webkit-backdrop-filter: saturate(175%) blur(24px);
+    backdrop-filter: saturate(175%) blur(24px);
+  }
+
+  /* ✨ [2026-09-29] 어두운 사진 위(첫 화면 명예의 전당 배너)의 프로필 알약·멈춤 버튼 — 위 규칙의 불투명한 흰 유리를
+     덮어써서 색 없는 투명 유리로. 위 규칙과 선택자 우선순위가 같아서 반드시 그 뒤에 둔다. */
+  .apple-app .hero-glass {
+    border: 1px solid rgb(255 255 255 / 0.28) !important;
+    background-color: rgb(255 255 255 / 0.10) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+    transition: background-color 180ms ease;
+  }
+
+  /* ✨ [2026-09-30] 사진 위 상 배지(대상·우수상 등) — 흐린 유리 + 흰 테두리 + 흰 글자로 통일 */
+  .apple-app .award-glass {
+    border: 1.5px solid rgb(255 255 255 / 0.8) !important;
+    background-color: rgb(255 255 255 / 0.12) !important;
+    background-image: none !important;
+    color: #fff !important;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.12) !important;
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    backdrop-filter: blur(10px) saturate(140%);
+  }
+
+  .apple-app button.hero-glass:hover {
+    background-color: rgb(255 255 255 / 0.18) !important;
+  }
+
+  .apple-app main .bg-slate-50,
+  .apple-app main [class*="from-[#f8faff]"] {
+    background-color: transparent !important;
+  }
+
+  .apple-app main input,
+  .apple-app main textarea,
+  .apple-app main select {
+    border-color: rgb(255 255 255 / 0.72) !important;
+    background-color: rgb(255 255 255 / 0.58) !important;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8), 0 8px 24px rgb(31 38 50 / 0.055);
+    -webkit-backdrop-filter: saturate(170%) blur(18px);
+    backdrop-filter: saturate(170%) blur(18px);
+  }
+
+  /* ✨ [2026-09-30] 화면 전체를 덮는 팝업(모달·미리보기) — 상단 바는 그대로 보이게 두고(예전엔 본문 층을 상단 바 위로
+     올려서 팝업이 열리면 상단 바가 통째로 사라졌다), 팝업은 상단 바 아래 공간 가운데에 띄운다. */
+  .apple-app main div.fixed.inset-0.flex.items-center,
+  .apple-app main div.fixed.inset-0.overflow-y-auto {
+    padding-top: 76px !important;
+  }
+
+  /* 안쪽 스크롤이 있는 팝업 상자는 남은 공간 안으로 높이를 제한 — 길면 위쪽이 상단 바 밑으로 들어가지 않게 */
+  .apple-app main div.fixed.inset-0.flex.items-center > [class*="overflow-y-auto"]:not(.absolute):not(.fixed),
+  .apple-app main div.fixed.inset-0.flex.items-center > [class*="overflow-auto"]:not(.absolute):not(.fixed) {
+    max-height: 100%;
+  }
+
+  @media (min-width: 1024px) {
+    .apple-app main div.fixed.inset-0.flex.items-center,
+    .apple-app main div.fixed.inset-0.overflow-y-auto {
+      padding-top: 88px !important;
+    }
+  }
+
+  /* ✨ [2026-09-30] 입력칸 안에 겹쳐 놓은 아이콘(검색 돋보기 등)이 사라지던 문제 — 위 규칙의 backdrop-filter 때문에 입력칸이
+     쌓임 순서상 위로 올라와 아이콘을 덮었다(새로고침 직후 CSS 적용 전에만 잠깐 보였음). 절대 위치 아이콘을 항상 위로. */
+  .apple-app main svg.absolute {
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .apple-app main input:focus,
+  .apple-app main textarea:focus,
+  .apple-app main select:focus {
+    border-color: rgb(0 113 227 / 0.28) !important;
+    background-color: rgb(255 255 255 / 0.82) !important;
+    box-shadow: 0 0 0 4px rgb(0 113 227 / 0.10), 0 12px 30px rgb(31 38 50 / 0.07);
+  }
+
+  /* 아이콘·라벨을 컬러 사각형 박스 대신 무채색 유리 표면으로 정리한다. */
+  .apple-app main div[class*="bg-indigo-"][class*="rounded-"],
+  .apple-app main div[class*="bg-blue-"][class*="rounded-"],
+  .apple-app main div[class*="bg-purple-"][class*="rounded-"],
+  .apple-app main div[class*="bg-violet-"][class*="rounded-"],
+  .apple-app main div[class*="bg-cyan-"][class*="rounded-"] {
+    border: 1px solid rgb(255 255 255 / 0.78) !important;
+    background-color: rgb(255 255 255 / 0.56) !important;
+    background-image: linear-gradient(145deg, rgb(255 255 255 / 0.68), rgb(235 235 238 / 0.42)) !important;
+    color: #3a3a3c !important;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92), 0 8px 24px rgb(31 38 50 / 0.07) !important;
+    -webkit-backdrop-filter: saturate(150%) blur(18px);
+    backdrop-filter: saturate(150%) blur(18px);
+  }
+
+  .apple-app main span[class*="bg-indigo-"][class*="rounded-"],
+  .apple-app main span[class*="bg-blue-"][class*="rounded-"],
+  .apple-app main span[class*="bg-purple-"][class*="rounded-"],
+  .apple-app main span[class*="bg-violet-"][class*="rounded-"],
+  .apple-app main span[class*="bg-cyan-"][class*="rounded-"],
+  .apple-app main span[class*="bg-pink-"][class*="rounded-"] {
+    border: 1px solid rgb(0 0 0 / 0.055) !important;
+    background: rgb(255 255 255 / 0.54) !important;
+    color: #515154 !important;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.84), 0 4px 14px rgb(31 38 50 / 0.045) !important;
+  }
+
+  .apple-app main div[class*="bg-indigo-"][class*="rounded-"] svg,
+  .apple-app main div[class*="bg-blue-"][class*="rounded-"] svg,
+  .apple-app main div[class*="bg-purple-"][class*="rounded-"] svg,
+  .apple-app main div[class*="bg-violet-"][class*="rounded-"] svg,
+  .apple-app main div[class*="bg-cyan-"][class*="rounded-"] svg {
+    color: #3a3a3c !important;
+    stroke-width: 1.75;
+  }
+
+  /* 섹션 제목의 '아이콘+알약' 패턴을 Apple식 작은 eyebrow 텍스트로 단순화. */
+  .apple-app main div.inline-flex[class*="rounded-full"][class*="mb-"] {
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: #6e6e73 !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .apple-app main div.inline-flex[class*="rounded-full"][class*="mb-"] > svg {
+    display: none;
+  }
+
+  /* 단독 아이콘에는 색 박스를 씌우지 않고 얇은 단색 선만 남긴다. */
+  .apple-app main div[class*="bg-indigo-"][class*="rounded-"]:has(> svg),
+  .apple-app main div[class*="bg-blue-"][class*="rounded-"]:has(> svg),
+  .apple-app main div[class*="bg-purple-"][class*="rounded-"]:has(> svg),
+  .apple-app main div[class*="bg-violet-"][class*="rounded-"]:has(> svg),
+  .apple-app main div[class*="bg-cyan-"][class*="rounded-"]:has(> svg) {
+    border: 0 !important;
+    background: transparent !important;
+    color: #1d1d1f !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .apple-app main .bg-white,
+  .apple-app main [class*="bg-white/"] {
+    -webkit-backdrop-filter: saturate(165%) blur(18px);
+    backdrop-filter: saturate(165%) blur(18px);
+  }
+}
+
+/* ✨ [2026-09-30] 팝업·모바일 메뉴가 열려 있는 동안 뒤 페이지 스크롤 잠금.
+   잠그면 스크롤바가 사라져 화면 폭이 넓어지므로, 사라진 스크롤바 폭(--sbw, main.tsx에서 잼)만큼 오른쪽 여백을 채워
+   페이지와 상단 바가 1px도 움직이지 않게 한다. (scrollbar-gutter는 잠금 상태의 최상위 스크롤에서 무시되어 안 씀) */
+html.scroll-locked,
+html:has(div.fixed.inset-0.flex.items-center.justify-center),
+html:has(div.fixed.inset-0.overflow-y-auto) {
+  overflow: hidden;
+  padding-right: var(--sbw, 0px);
+}
+
+html.scroll-locked nav[aria-label="주요 메뉴"],
+html:has(div.fixed.inset-0.flex.items-center.justify-center) nav[aria-label="주요 메뉴"],
+html:has(div.fixed.inset-0.overflow-y-auto) nav[aria-label="주요 메뉴"] {
+  padding-right: var(--sbw, 0px);
+}

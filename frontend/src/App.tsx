@@ -13,6 +13,7 @@ import { Signup } from "./pages/auth/Signup";
 import { FindAccount } from "./pages/auth/FindAccount";
 import { SignupSuccess } from "./pages/auth/SignupSuccess";
 import { ProfilePage } from "./pages/profile/ProfilePage";
+import { PrintPage } from "./pages/print/PrintPage";
 
 import { NoticePage } from "./pages/notice/NoticePage";
 import { NoticeDetail } from "./pages/notice/NoticeDetail";
@@ -22,21 +23,80 @@ import { EventPage } from "./pages/event/EventPage";
 import { EventDetail } from "./pages/event/EventDetail";
 import { EventWrite } from "./pages/event/EventWrite";
 
+import { HallOfFamePage } from "./pages/halloffame/HallOfFamePage";
+import { HallOfFameDetail } from "./pages/halloffame/HallOfFameDetail";
+import { HallOfFameWrite } from "./pages/halloffame/HallOfFameWrite";
+
 import { BoardPage } from "./pages/board/BoardPage";
 import { BoardWrite } from "./pages/board/BoardWrite";
 import { BoardDetail } from "./pages/board/BoardDetail";
 
 import { AssemblyPage } from "./pages/assembly/AssemblyPage";
+import { OjListPage } from "./pages/oj/OjListPage";
+import { OjProblemPage } from "./pages/oj/OjProblemPage";
+import { OjAdminPage } from "./pages/oj/OjAdminPage";
+import { OjAdminProblemWrite } from "./pages/oj/OjAdminProblemWrite";
 import { AdminPage } from "./pages/admin/AdminPage";
 import { ContactAdmin } from "./pages/admin/ContactAdmin";
 import { MemberDetailTab } from "./pages/profile/tabs/MemberDetailTab";
 
+// 명예의 전당 정렬: "게시 순서(id)"가 아니라 게시글 내부 대회 날짜(자유 텍스트, 범위 표기 가능) 기준 최신순.
+// 날짜 패턴을 찾지 못하면 맨 뒤로 보내고, 그 안에서는 id 내림차순으로 대체한다.
+const parseHallOfFameDate = (dateStr?: string): number => {
+  if (!dateStr) return -Infinity;
+  const matches = dateStr.match(/\d{4}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}/g);
+  if (!matches) return -Infinity;
+  const timestamps = matches
+    .map((m) => {
+      const [y, mo, d] = m.split(/[.\-/]/).map((p) => parseInt(p.trim(), 10));
+      return new Date(y, mo - 1, d).getTime();
+    })
+    .filter((t) => !Number.isNaN(t));
+  return timestamps.length > 0 ? Math.max(...timestamps) : -Infinity;
+};
+
+const sortHallOfFameByDate = (list: any[]) =>
+  [...list].sort((a, b) => {
+    const diff = parseHallOfFameDate(b.date) - parseHallOfFameDate(a.date);
+    return diff !== 0 ? diff : b.id - a.id;
+  });
+
+// DB에 테스트 계정을 만들지 않고 로그인 후 레이아웃만 확인하는 로컬 전용 미리보기.
+// localhost/127.0.0.1에서만 ?preview=member 또는 ?preview=admin으로 활성화된다.
+const LOCAL_PREVIEW_USER = {
+  loginId: "design-preview",
+  name: "디자인 미리보기",
+  studentId: "20999999",
+  dept: "AI소프트웨어학부(컴퓨터공학전공)",
+  interests: "웹 개발",
+  discordTag: "preview-user",
+  userStatus: "ATTENDING",
+  role: "USER",
+};
+
+const LOCAL_PREVIEW_ADMIN = {
+  ...LOCAL_PREVIEW_USER,
+  loginId: "admin-design-preview",
+  name: "관리자 미리보기",
+  discordTag: "admin-preview-user",
+  role: "ADMIN",
+};
+
+const getLocalPreviewRole = () => {
+  if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) return null;
+  const preview = new URLSearchParams(window.location.search).get("preview");
+  return preview === "member" || preview === "admin" ? preview : null;
+};
+
 function AppContent() {
   const navigate = useNavigate();
 
-  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem("isLoggedIn") === "true");
-  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem("isAdmin") === "true");
+  const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(getLocalPreviewRole()) || localStorage.getItem("isLoggedIn") === "true");
+  const [isAdmin, setIsAdmin] = useState(() => getLocalPreviewRole() === "admin" || localStorage.getItem("isAdmin") === "true");
   const [currentUser, setCurrentUser] = useState<any>(() => {
+    const previewRole = getLocalPreviewRole();
+    if (previewRole === "admin") return LOCAL_PREVIEW_ADMIN;
+    if (previewRole === "member") return LOCAL_PREVIEW_USER;
     const savedUser = localStorage.getItem("currentUser");
     return savedUser ? JSON.parse(savedUser) : null;
   });
@@ -46,9 +106,13 @@ function AppContent() {
   const [posts, setPosts] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
+  const [hallOfFame, setHallOfFame] = useState<any[]>([]);
+  const [chosunPrograms, setChosunPrograms] = useState<any[]>([]);
 
   const handleLogout = async (isForced: boolean = false) => {
     if (!isForced && !window.confirm("로그아웃 하시겠습니까?")) return;
+    // ✨ [2026-09-29] 순서 중요: 로그아웃 기록 → 토큰 폐기. 토큰을 먼저 폐기하면 뒤따르는 요청이
+    // 인증 실패(403)로 떨어져 "인증이 만료되었습니다" 알림과 함께 로그인 페이지로 튕겨나갔었다.
     try {
       if (currentUser && currentUser.name) {
         await api.post("/members/logout-log", {
@@ -58,6 +122,14 @@ function AppContent() {
       }
     } catch (e) {
       console.error("로그아웃 로그 전송 실패", e);
+    }
+    try {
+      // 로그아웃 시 서버에서 지금 이 토큰을 실제로 무효화(tokenVersion 증가).
+      // 이후엔 만료 전이라도 이 토큰으로는 어떤 요청도 인증되지 않음 — 로컬스토리지를
+      // 지우기 전에, 아직 토큰이 남아있는 상태에서 마지막으로 호출해야 함
+      await api.post("/members/logout");
+    } catch (e) {
+      console.error("토큰 무효화 실패", e);
     }
     setIsLoggedIn(false);
     setIsAdmin(false);
@@ -94,6 +166,22 @@ function AppContent() {
     } catch (error) {
       console.error("❌ 행사 로드 에러:", error);
     }
+
+    // 4. 명예의 전당 가져오기
+    try {
+      const hallOfFameRes = await api.get('/hall-of-fame');
+      if (hallOfFameRes.data) setHallOfFame(hallOfFameRes.data);
+    } catch (error) {
+      console.error("❌ 명예의 전당 로드 에러:", error);
+    }
+
+    // 5. 조선대 SW중심대학 지원프로그램 가져오기(신청 가능한 것만, 서버가 주기적으로 캐싱해둔 값)
+    try {
+      const chosunProgramsRes = await api.get('/chosun-programs');
+      if (chosunProgramsRes.data) setChosunPrograms(chosunProgramsRes.data);
+    } catch (error) {
+      console.error("❌ 조선대 SW중심대학 지원프로그램 로드 에러:", error);
+    }
   };
 
   useEffect(() => {
@@ -104,15 +192,16 @@ function AppContent() {
 
   useEffect(() => {
     if (location.hash) {
-      setTimeout(() => {
-        const id = location.hash.replace('#', '');
-        const element = document.getElementById(id);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth' });
-        }
-      }, 100);
+      // ✨ [2026-09-29] 다른 페이지에서 "/#faq" 처럼 섹션으로 들어올 때는 맨 위부터 부드럽게 쭉 내려가지 않고
+      // 그 섹션으로 바로 이동한다. 위쪽 섹션 데이터가 늦게 로드되며 높이가 바뀔 수 있어 잠시 뒤 한 번 더 맞춘다.
+      const id = location.hash.replace('#', '');
+      // 'instant' — 사이트 CSS에 scroll-behavior: smooth가 걸려 있어 'auto'로는 여전히 부드럽게(쫘라락) 스크롤된다
+      const jump = () => document.getElementById(id)?.scrollIntoView({ behavior: 'instant', block: 'start' });
+      const t1 = setTimeout(jump, 60);
+      const t2 = setTimeout(jump, 450);
+      return () => { clearTimeout(t1); clearTimeout(t2); };
     } else {
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     }
   }, [location.pathname, location.hash]);
 
@@ -202,6 +291,18 @@ function AppContent() {
     }
   };
 
+  const handleDeleteHallOfFame = async (id: number) => {
+    if (!isAdmin || !isLoggedIn) return;
+    if (window.confirm("이 명예의 전당 게시물을 삭제하시겠습니까?")) {
+      try {
+        await api.delete(`/hall-of-fame/${id}`);
+        setHallOfFame(prev => prev.filter(h => h.id !== id));
+        navigate("/hall-of-fame");
+        alert("삭제되었습니다.");
+      } catch (e) { console.error("명예의 전당 삭제 실패", e); }
+    }
+  };
+
   // Helper for components that still rely on onNavigate string prop temporarily
   const handleNavigateCompat = (path: string, param?: any) => {
     if (path === "home") {
@@ -232,6 +333,13 @@ function AppContent() {
     } else if (path === "event-write") {
       if (param) navigate(`/event/write/${param}`);
       else navigate("/event/write");
+    } else if (path === "halloffame-page" || path === "halloffame") {
+      navigate("/hall-of-fame");
+    } else if (path === "halloffame-detail" && param) {
+      navigate(`/hall-of-fame/${param}`);
+    } else if (path === "halloffame-write") {
+      if (param) navigate(`/hall-of-fame/write/${param}`);
+      else navigate("/hall-of-fame/write");
     } else if (path === "member-detail" && param) {
       navigate(`/assembly/member/${param}`);
     } else if (path === "board" || path === "board-page") {
@@ -247,6 +355,9 @@ function AppContent() {
 
   const hideLayoutPaths = ["/login", "/signup", "/find-account", "/signup-success", "/contact-admin"];
   const isLayoutHidden = hideLayoutPaths.some(path => window.location.pathname.startsWith(path));
+  // ✨ [2026-09-30] 앱처럼 쓰는 화면(총회·OJ·관리·개인 프로필)에서는 하단 푸터를 숨긴다 (하위 경로 포함)
+  const hideFooterPaths = ["/assembly", "/oj", "/admin", "/profile", "/print"];
+  const isFooterHidden = hideFooterPaths.some(path => location.pathname === path || location.pathname.startsWith(path + "/"));
 
   return (
     <>
@@ -261,9 +372,9 @@ function AppContent() {
         />
       )}
 
-      <main>
+      <main className="relative z-[1] min-h-screen bg-transparent">
         <Routes>
-          <Route path="/" element={<Home isAdmin={isAdmin && isLoggedIn} isLoggedIn={isLoggedIn} events={events} notices={notices} posts={posts} onNavigate={handleNavigateCompat} />} />
+          <Route path="/" element={<Home isAdmin={isAdmin && isLoggedIn} isLoggedIn={isLoggedIn} events={events} notices={notices} posts={posts} hallOfFame={hallOfFame} chosunPrograms={chosunPrograms} onNavigate={handleNavigateCompat} />} />
 
           {/* ✨ 핵심 2: 로그인 성공 시 상태(State)와 LocalStorage를 동시에 즉시 업데이트하도록 수정 */}
           <Route path="/login" element={
@@ -288,9 +399,17 @@ function AppContent() {
           <Route path="/signup-success" element={<SignupSuccess onNavigate={handleNavigateCompat} />} />
 
           <Route path="/profile" element={<ProfilePage onNavigate={handleNavigateCompat} user={currentUser} setUser={setCurrentUser} posts={posts} />} />
+          {/* ✨ [2026-10-01] 웹 인쇄 — 로그인한 부원만 */}
+          <Route path="/print" element={isLoggedIn ? <PrintPage /> : <Navigate to="/login" replace />} />
 
           <Route path="/assembly" element={<AssemblyPage isAdmin={isAdmin} userStatus={userStatus} onNavigate={handleNavigateCompat} loginId={currentUser?.loginId} />} />
           <Route path="/assembly/member/:id" element={<MemberDetailTab loginId={""} onBack={() => navigate("/assembly")} />} />
+
+          <Route path="/oj" element={<OjListPage loginId={currentUser?.loginId} isAdmin={isAdmin && isLoggedIn} />} />
+          <Route path="/oj/admin" element={(isAdmin && isLoggedIn) ? <OjAdminPage /> : <Navigate to="/oj" replace />} />
+          <Route path="/oj/admin/write" element={(isAdmin && isLoggedIn) ? <OjAdminProblemWrite loginId={currentUser?.loginId} /> : <Navigate to="/oj" replace />} />
+          <Route path="/oj/admin/write/:id" element={(isAdmin && isLoggedIn) ? <OjAdminProblemWrite loginId={currentUser?.loginId} /> : <Navigate to="/oj" replace />} />
+          <Route path="/oj/:problemId" element={<OjProblemPage loginId={currentUser?.loginId} isAdmin={isAdmin && isLoggedIn} />} />
 
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/contact-admin" element={<ContactAdmin onNavigate={handleNavigateCompat} />} />
@@ -310,6 +429,11 @@ function AppContent() {
           <Route path="/event/write/:id" element={(isAdmin && isLoggedIn) ? <EventWriteWrapper events={events} onNavigate={handleNavigateCompat} user={currentUser} fetchEvents={fetchData} /> : <Navigate to="/" replace />} />
           <Route path="/event/:id" element={<EventDetailWrapper events={events} isAdmin={isAdmin && isLoggedIn} isLoggedIn={isLoggedIn} user={currentUser} setEvents={setEvents} onDelete={handleDeleteEvent} handleNavigateCompat={handleNavigateCompat} />} />
 
+          <Route path="/hall-of-fame" element={<HallOfFamePage onNavigate={handleNavigateCompat} isAdmin={isAdmin && isLoggedIn} isLoggedIn={isLoggedIn} entries={sortHallOfFameByDate(hallOfFame)} />} />
+          <Route path="/hall-of-fame/write" element={(isAdmin && isLoggedIn) ? <HallOfFameWriteWrapper entries={hallOfFame} onNavigate={handleNavigateCompat} fetchHallOfFame={fetchData} /> : <Navigate to="/" replace />} />
+          <Route path="/hall-of-fame/write/:id" element={(isAdmin && isLoggedIn) ? <HallOfFameWriteWrapper entries={hallOfFame} onNavigate={handleNavigateCompat} fetchHallOfFame={fetchData} /> : <Navigate to="/" replace />} />
+          <Route path="/hall-of-fame/:id" element={<HallOfFameDetailWrapper entries={hallOfFame} isAdmin={isAdmin && isLoggedIn} isLoggedIn={isLoggedIn} onDelete={handleDeleteHallOfFame} handleNavigateCompat={handleNavigateCompat} />} />
+
           <Route path="*" element={
             <div className="pt-40 text-center h-screen bg-slate-50">
               <h2 className="text-3xl font-black text-slate-900 mb-8 uppercase">404 Not Found</h2>
@@ -319,7 +443,7 @@ function AppContent() {
         </Routes>
       </main>
 
-      {!isLayoutHidden && <Footer onNavigate={handleNavigateCompat} />}
+      {!isLayoutHidden && !isFooterHidden && <Footer onNavigate={handleNavigateCompat} isAdmin={isAdmin && isLoggedIn} />}
     </>
   );
 }
@@ -364,9 +488,22 @@ function EventWriteWrapper({ events, onNavigate, user, fetchEvents }: any) {
   return <EventWrite onNavigate={onNavigate} event={event} user={user} fetchEvents={fetchEvents} />;
 }
 
+function HallOfFameDetailWrapper({ entries, isAdmin, isLoggedIn, onDelete, handleNavigateCompat }: any) {
+  const { id } = useParams();
+  const entry = entries.find((e: any) => Number(e.id) === Number(id));
+  return <HallOfFameDetail onNavigate={handleNavigateCompat} isAdmin={isAdmin} isLoggedIn={isLoggedIn} entry={entry} onDelete={onDelete} />;
+}
+
+function HallOfFameWriteWrapper({ entries, onNavigate, fetchHallOfFame }: any) {
+  const { id } = useParams();
+  const entry = id ? entries.find((e: any) => Number(e.id) === Number(id)) : undefined;
+  return <HallOfFameWrite onNavigate={onNavigate} entry={entry} fetchHallOfFame={fetchHallOfFame} />;
+}
+
 function App() {
   return (
-    <div className="min-h-screen bg-white font-sans selection:bg-indigo-100 selection:text-indigo-700">
+    <div className="apple-app isolate relative min-h-screen bg-[#f5f5f7] font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-800">
+      <div className="apple-ambient" aria-hidden="true" />
       <BrowserRouter>
         <AppContent />
       </BrowserRouter>

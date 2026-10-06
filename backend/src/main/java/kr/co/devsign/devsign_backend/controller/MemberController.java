@@ -2,6 +2,7 @@ package kr.co.devsign.devsign_backend.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import kr.co.devsign.devsign_backend.service.MemberService;
+import kr.co.devsign.devsign_backend.util.JwtUtil;
 import kr.co.devsign.devsign_backend.dto.common.StatusResponse;
 import kr.co.devsign.devsign_backend.dto.member.ChangePasswordRequest;
 import kr.co.devsign.devsign_backend.dto.member.DiscordLookupResponse;
@@ -19,7 +20,9 @@ import kr.co.devsign.devsign_backend.dto.member.VerifyCodeRequest;
 import kr.co.devsign.devsign_backend.dto.member.VerifyCodeResponse;
 import kr.co.devsign.devsign_backend.dto.member.VerifyIdPwRequest;
 import kr.co.devsign.devsign_backend.dto.member.VerifyIdPwResponse;
+import kr.co.devsign.devsign_backend.config.AuthGuard;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,6 +34,7 @@ import java.util.List;
 public class MemberController {
 
     private final MemberService memberService;
+    private final JwtUtil jwtUtil;
 
     @PostMapping("/signup")
     public ResponseEntity<MemberResponse> signup(@RequestBody SignupRequest payload, HttpServletRequest request) {
@@ -43,6 +47,12 @@ public class MemberController {
         return memberService.getAllMembers();
     }
 
+    // ✨ [신규] 홈 화면 하단 연락처(회장/부회장/총무)용 — 비로그인 방문자도 조회 가능
+    @GetMapping("/officers")
+    public List<kr.co.devsign.devsign_backend.dto.member.OfficerContactResponse> getOfficerContacts() {
+        return memberService.getOfficerContacts();
+    }
+
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest loginRequest, HttpServletRequest request) {
         return memberService.login(loginRequest, request);
@@ -53,18 +63,33 @@ public class MemberController {
         return memberService.logoutLog(requestData, request.getRemoteAddr());
     }
 
+    // ✨ [신규] 로그아웃 시 실제로 토큰을 서버에서 무효화(tokenVersion 증가). 위/아래 요청 바디가
+    // 아니라 Authorization 헤더의 토큰 자체에서 loginId를 뽑아 쓰므로 위조 불가능.
+    @PostMapping("/logout")
+    public StatusResponse logout(HttpServletRequest request) {
+        String loginId = jwtUtil.getLoginIdFromRequest(request);
+        if (loginId == null) {
+            return StatusResponse.success(); // 이미 유효하지 않은 토큰이면 할 일 없음
+        }
+        return memberService.logout(loginId);
+    }
+
     // ✨ [수정 완료] 프론트엔드에서 쿼리 파라미터로 날아올 인증번호(authCode)를 받아서 Service(주방장)로 넘겨줍니다!
     @PutMapping("/update/{loginId}")
     public StatusResponse updateMember(
+            Authentication authentication,
             @PathVariable String loginId, 
             @RequestBody UpdateMemberRequest updateData,
             @RequestParam(required = false) String authCode
     ) {
+        // ✨ [2026-09-29] 본인 프로필만 수정 가능 — 남의 디스코드 계정을 바꿔치기해 비밀번호 재설정으로 계정을 빼앗는 경로 차단
+        AuthGuard.requireSelf(authentication, loginId);
         return memberService.updateMember(loginId, updateData, authCode);
     }
 
     @PutMapping("/change-password/{loginId}")
-    public StatusResponse changePassword(@PathVariable String loginId, @RequestBody ChangePasswordRequest request) {
+    public StatusResponse changePassword(Authentication authentication, @PathVariable String loginId, @RequestBody ChangePasswordRequest request) {
+        AuthGuard.requireSelf(authentication, loginId);
         return memberService.changePassword(loginId, request);
     }
 

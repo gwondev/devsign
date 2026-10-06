@@ -3,9 +3,12 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, ChevronLeft, PencilLine, AlertCircle,
-  ImagePlus, Trash2, CheckCircle2
+  ImagePlus, Trash2, CheckCircle2, Paperclip, FileText
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
+import { FileDropZone } from "../../components/ui/FileDropZone";
+
+type AttachmentItem = { name: string; url?: string };
 
 export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => {
   const [title, setTitle] = useState("");
@@ -16,12 +19,20 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ✨ [신규] 사진과 별개의 다운로드용 일반 첨부파일
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
+
   useEffect(() => {
     if (notice) {
       setTitle(notice.title);
       setContent(notice.content);
       setTag(notice.category || notice.tag || "공지");
       setImages(notice.images || []);
+      setAttachments(notice.attachments || []);
     }
   }, [notice]);
 
@@ -29,7 +40,7 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
     const files = e.target.files;
     if (files) {
       const fileArray = Array.from(files);
-      
+
       // 실제 파일 객체 저장
       setImageFiles(prev => [...prev, ...fileArray]);
 
@@ -55,13 +66,38 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
     }
   };
 
+  // ✨ [신규] 파일 첨부 핸들러 (확장자 제한 없음)
+  const handleAttachmentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const fileArray = Array.from(files);
+      setAttachmentFiles(prev => [...prev, ...fileArray]);
+      setAttachments(prev => [...prev, ...fileArray.map(f => ({ name: f.name }))]);
+    }
+    e.target.value = "";
+  };
+
+  const removeAttachment = (index: number) => {
+    const removed = attachments[index];
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+
+    // 삭제된 첨부파일이 기존 서버에 있던 파일(url 보유)이 아닌 새로 추가한 파일인 경우
+    if (!removed.url) {
+      const newFileIndex = attachments.slice(0, index).filter(a => !a.url).length;
+      setAttachmentFiles(prev => prev.filter((_, i) => i !== newFileIndex));
+    }
+  };
+
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitLockRef.current) return;
     if (!title.trim() || !content.trim()) {
       alert("제목과 내용을 모두 입력해주세요. ⚠️");
       return;
     }
 
+    submitLockRef.current = true;
+    setIsSubmitting(true);
     try {
       // ✨ JSON 객체 대신 FormData 사용 (파일 전송을 위함)
       const formData = new FormData();
@@ -76,8 +112,22 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
       });
 
       // 기존에 올라가 있던 이미지 URL 유지 (수정 시)
-      const existingImages = images.filter(img => img.startsWith('http'));
-      formData.append("existingImages", JSON.stringify(existingImages));
+      // ✨ [수정] 백엔드 NoticeRequest의 필드명("images")과 일치시켜 실제로 바인딩되도록 수정.
+      // 문자열이 아닌 값이 섞여 있어도 죽지 않도록 방어적으로 필터링.
+      const existingImages = images.filter(img => typeof img === "string" && img.startsWith('http'));
+      existingImages.forEach(img => {
+        formData.append("images", img);
+      });
+
+      // ✨ [신규] 다운로드용 첨부파일: 기존 파일 유지 + 새 파일 전송
+      const existingAttachments = attachments.filter(a => a.url);
+      existingAttachments.forEach(a => {
+        formData.append("existingAttachmentNames", a.name);
+        formData.append("existingAttachmentUrls", a.url as string);
+      });
+      attachmentFiles.forEach(file => {
+        formData.append("attachments", file);
+      });
 
       let response;
       if (notice && notice.id) {
@@ -98,11 +148,14 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
     } catch (error) {
       console.error("공지사항 저장 실패:", error);
       alert("서버 저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setIsSubmitting(false);
+      submitLockRef.current = false;
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 pt-24 md:pt-32 pb-16 md:pb-20 font-sans">
+    <div className="write-page min-h-screen bg-slate-50 pt-24 md:pt-32 pb-16 md:pb-20 font-sans">
       <div className="max-w-4xl mx-auto px-4 md:px-6">
 
         <div className="flex items-center justify-between mb-8 md:mb-12">
@@ -135,9 +188,10 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
             </Button>
             <Button
               onClick={handlePublish}
+              disabled={isSubmitting}
               className="bg-indigo-600 text-white px-3 py-2 md:px-10 md:py-6 rounded-lg md:rounded-2xl font-black shadow-xl shadow-indigo-100 transition-all active:scale-95 text-[11px] md:text-sm h-auto"
             >
-              {notice ? "수정 완료" : "등록 완료"}
+              {isSubmitting ? "처리 중..." : (notice ? "수정 완료" : "등록 완료")}
             </Button>
           </div>
         </div>
@@ -190,6 +244,7 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
               <label className="text-[10px] md:text-xs font-black text-slate-400 uppercase ml-1 tracking-widest flex items-center gap-1.5 md:gap-2">
                 <ImagePlus className="w-3.5 h-3.5 md:w-4 md:h-4" /> 사진 첨부
               </label>
+              <FileDropZone inputRef={fileInputRef} label="사진을 놓으면 추가돼요">
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 md:gap-4">
                 <AnimatePresence>
                   {images.map((img, index) => (
@@ -220,6 +275,7 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
                   <span className="text-[8px] md:text-[10px] font-black uppercase">Add Photo</span>
                 </button>
               </div>
+              </FileDropZone>
               <input
                 type="file"
                 multiple
@@ -227,6 +283,55 @@ export const NoticeWrite = ({ onNavigate, notice, user, fetchNotices }: any) => 
                 className="hidden"
                 ref={fileInputRef}
                 onChange={handleImageUpload}
+              />
+            </div>
+
+            {/* ✨ [신규] 사진과 별개의 다운로드용 일반 첨부파일 섹션 */}
+            <div className="space-y-2 md:space-y-4">
+              <label className="text-[10px] md:text-xs font-black text-slate-400 uppercase ml-1 tracking-widest flex items-center gap-1.5 md:gap-2">
+                <Paperclip className="w-3.5 h-3.5 md:w-4 md:h-4" /> 파일 첨부
+              </label>
+              <FileDropZone inputRef={attachmentInputRef} label="파일을 놓으면 첨부돼요">
+              <div className="flex flex-col gap-2 md:gap-3">
+                <AnimatePresence>
+                  {attachments.map((att, index) => (
+                    <motion.div
+                      key={index}
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      className="flex items-center justify-between gap-3 px-4 py-3 md:px-6 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl border border-slate-100"
+                    >
+                      <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                        <FileText className="w-4 h-4 md:w-5 md:h-5 text-indigo-400 shrink-0" />
+                        <span className="text-xs md:text-sm font-bold text-slate-700 truncate">{att.name}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(index)}
+                        className="text-slate-300 hover:text-pink-500 transition-colors shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4 md:w-5 md:h-5" />
+                      </button>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                <button
+                  type="button"
+                  onClick={() => attachmentInputRef.current?.click()}
+                  className="flex items-center justify-center gap-2 py-3 md:py-4 rounded-xl md:rounded-2xl border-2 border-dashed border-slate-200 text-slate-300 hover:border-indigo-300 hover:text-indigo-400 hover:bg-indigo-50/30 transition-all"
+                >
+                  <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
+                  <span className="text-[10px] md:text-xs font-black uppercase">파일 추가 · 끌어다 놓기</span>
+                </button>
+              </div>
+              </FileDropZone>
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                ref={attachmentInputRef}
+                onChange={handleAttachmentUpload}
               />
             </div>
           </form>

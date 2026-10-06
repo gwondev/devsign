@@ -1,5 +1,7 @@
 package kr.co.devsign.devsign_backend.dto.assembly;
 
+import java.util.List;
+
 public record AssemblyReportResponse(
         Long id,
         String loginId,
@@ -14,6 +16,13 @@ public record AssemblyReportResponse(
         String deadline,
         String presentationPath,
         String pdfPath,
-        String otherPath
+        String otherPath,
+        String planOverview,
+        List<String> planGoals,
+        List<PlanRoadmapItemDto> planRoadmapItems,
+        List<PlanRoleDto> planRoles,
+        List<PlanLinkDto> planLinks,
+        String planNotes,
+        String planFilePath
 ) {
 }

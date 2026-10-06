@@ -2,6 +2,7 @@ package kr.co.devsign.devsign_backend.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import kr.co.devsign.devsign_backend.dto.admin.AccessLogResponse;
+import kr.co.devsign.devsign_backend.dto.admin.AdminDiscordCheckResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminMemberResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminPasswordVerifyRequest;
 import kr.co.devsign.devsign_backend.dto.admin.AdminPeriodResponse;
@@ -10,15 +11,20 @@ import kr.co.devsign.devsign_backend.dto.admin.AdminPeriodSubmissionResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminPeriodZipRequest;
 import kr.co.devsign.devsign_backend.dto.admin.HeroSettingsRequest;
 import kr.co.devsign.devsign_backend.dto.admin.HeroSettingsResponse;
+import kr.co.devsign.devsign_backend.dto.admin.NotifyMembersRequest;
 import kr.co.devsign.devsign_backend.dto.admin.RestoreMemberRequest;
 import kr.co.devsign.devsign_backend.dto.admin.SyncDiscordResponse;
+import kr.co.devsign.devsign_backend.dto.admin.UpdateDiscordTagRequest;
 import kr.co.devsign.devsign_backend.dto.common.StatusResponse;
 import kr.co.devsign.devsign_backend.service.AdminService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 
 @RestController
@@ -82,9 +88,57 @@ public class AdminController {
         return adminService.syncDiscord();
     }
 
+    // ✨ [신규] 선택한 회원들에게 디스코드 DM으로 안내 메시지 일괄 발송
+    @PostMapping("/notify")
+    public ResponseEntity<?> notifyMembers(@RequestBody NotifyMembersRequest request) {
+        try {
+            return ResponseEntity.ok(adminService.notifyMembers(request));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(StatusResponse.fail(e.getMessage()));
+        }
+    }
+
+    // ✨ [신규] 웹사이트 회원들이 실제로 동아리 디스코드 서버에 남아있는지 확인 (탈퇴자 파악용)
+    @GetMapping("/discord-check")
+    public ResponseEntity<?> checkDiscordMembership() {
+        try {
+            return ResponseEntity.ok(adminService.checkDiscordMembership());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(StatusResponse.fail(e.getMessage()));
+        }
+    }
+
+    // ✨ [2026-09-08 신규] "명단 대조" — 업로드된 엑셀 부원 명부를 실제 디스코드 서버 멤버와 대조
+    @PostMapping(value = "/roster-check", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> checkRoster(@RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(adminService.checkRoster(file));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(StatusResponse.fail(e.getMessage()));
+        } catch (IOException e) {
+            return ResponseEntity.badRequest().body(StatusResponse.fail("엑셀 파일을 읽을 수 없습니다: " + e.getMessage()));
+        }
+    }
+
     @PutMapping("/members/{id}/suspend")
     public StatusResponse toggleSuspension(@PathVariable Long id, HttpServletRequest request) {
         return adminService.toggleSuspension(id, request.getRemoteAddr());
+    }
+
+    // ✨ [2026-09-08 추가] 디스코드에서 나간 것으로 확인된 회원을 "나간 인원"으로 표시/해제(토글)
+    @PutMapping("/members/{id}/departed")
+    public StatusResponse toggleDeparted(@PathVariable Long id, HttpServletRequest request) {
+        return adminService.toggleDeparted(id, request.getRemoteAddr());
+    }
+
+    // ✨ [신규] 관리자가 직접 회원의 디스코드 태그를 수정
+    @PutMapping("/members/{id}/discord-tag")
+    public StatusResponse updateDiscordTag(
+            @PathVariable Long id,
+            @RequestBody UpdateDiscordTagRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        return adminService.updateDiscordTag(id, request.discordTag(), httpRequest.getRemoteAddr());
     }
 
     @PostMapping("/members/restore")

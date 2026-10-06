@@ -14,17 +14,22 @@ import kr.co.devsign.devsign_backend.repository.MemberRepository;
 import kr.co.devsign.devsign_backend.repository.PostLikeRepository;
 import kr.co.devsign.devsign_backend.repository.PostRepository;
 import kr.co.devsign.devsign_backend.repository.PostViewRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import kr.co.devsign.devsign_backend.dto.board.CommentResponse;
 import kr.co.devsign.devsign_backend.dto.board.CreateCommentRequest;
 import kr.co.devsign.devsign_backend.dto.board.CreatePostRequest;
+import kr.co.devsign.devsign_backend.dto.board.FeeLedgerItemDto;
 import kr.co.devsign.devsign_backend.dto.board.PostResponse;
 import kr.co.devsign.devsign_backend.dto.board.UpdatePostRequest;
 import kr.co.devsign.devsign_backend.dto.common.StatusResponse;
+import kr.co.devsign.devsign_backend.entity.FeeLedgerItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.http.HttpStatus;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -49,6 +54,9 @@ public class BoardService {
     private final CommentLikeRepository commentLikeRepository;
 
     private final AccessLogService accessLogService;
+    // ✨ 이 프로젝트의 Spring 컨텍스트에는 자동구성된 ObjectMapper 빈이 없어(주입 시 기동 실패),
+    // 회비 내역 JSON 파싱 전용으로 직접 생성해서 사용한다.
+    private static final ObjectMapper FEE_ITEMS_MAPPER = new ObjectMapper();
 
     // ✨ application.properties에서 설정한 저장 경로를 가져옵니다.
     @Value("${app.upload.base-dir}")
@@ -57,10 +65,33 @@ public class BoardService {
     @PersistenceContext
     private EntityManager entityManager;
 
-    public List<PostResponse> getAllPosts() {
+    private static final String FEE_CATEGORY = "회비";
+
+    // ✨ 회비 게시글은 목록 자체는 비로그인 사용자에게도 노출(홈/게시판에서 존재를 알 수 있어야
+    // 하므로)하되, 계좌번호·상세 내용처럼 민감한 정보는 비로그인 응답에서 서버단에서 지운다.
+    // "자세히보기"(상세 조회)는 별도로 getPostDetail()에서 로그인 필수로 막음.
+    public List<PostResponse> getAllPosts(String loginId) {
+        boolean isLoggedIn = loginId != null && !loginId.isBlank();
         return postRepository.findAllByOrderByIdDesc().stream()
-                .map(this::toPostResponse)
+                .map(post -> {
+                    PostResponse response = toPostResponse(post);
+                    if (!isLoggedIn && FEE_CATEGORY.equals(post.getCategory())) {
+                        return redactFeePostForAnonymous(response);
+                    }
+                    return response;
+                })
                 .toList();
+    }
+
+    // ✨ 비로그인 사용자에게는 회비 게시글의 제목/대상학기/최종잔액 등 "미리보기"에 필요한 정보만
+    // 남기고, 항목별 내역(feeItems)·상세 내용(content)·이미지·댓글처럼 상세한 정보는 비워서 응답
+    private PostResponse redactFeePostForAnonymous(PostResponse r) {
+        return new PostResponse(
+                r.id(), r.title(), null, r.category(), r.author(), r.loginId(), r.studentId(),
+                r.profileImage(), r.views(), r.likes(), r.likedByMe(), List.of(), List.of(),
+                r.createdAt(), r.date(),
+                r.feeTerm(), null, List.of(), r.feeFinalBalance()
+        );
     }
 
     // ✨ [수정] MultipartFile 리스트를 받아 파일로 저장하는 로직이 추가되었습니다.
@@ -72,6 +103,7 @@ public class BoardService {
         post.setTitle(payload.title());
         post.setContent(payload.content());
         post.setCategory(payload.category());
+        applyFeeFields(post, payload.category(), payload.feeTerm(), payload.feeOpeningBalance(), payload.feeItemsJson());
 
         // 🚀 이미지 파일 저장 처리
         List<String> imageUrls = saveFiles(files);
@@ -91,6 +123,12 @@ public class BoardService {
     @Transactional
     public PostResponse getPostDetail(Long id, String loginId) {
         Post post = postRepository.findById(id).orElseThrow();
+
+        // ✨ 목록에서만 걸러지고 상세 URL로 직접 접근하면 보이는 걸 막기 위해 상세 조회도 동일하게 차단
+        if (FEE_CATEGORY.equals(post.getCategory()) && (loginId == null || loginId.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "로그인 후 볼 수 있는 게시글입니다.");
+        }
+
         Member member = memberRepository.findByLoginId(loginId != null ? loginId : "").orElse(null);
 
         if (member != null) {
@@ -117,6 +155,7 @@ public class BoardService {
         post.setTitle(payload.title());
         post.setContent(payload.content());
         post.setCategory(payload.category());
+        applyFeeFields(post, payload.category(), payload.feeTerm(), payload.feeOpeningBalance(), payload.feeItemsJson());
 
         // 🚀 이미지 수정 로직: 기존 이미지(프론트에서 남겨둔 것) + 새로 업로드한 파일
         List<String> currentImages = payload.images() != null ? new ArrayList<>(payload.images()) : new ArrayList<>();
@@ -125,6 +164,44 @@ public class BoardService {
 
         accessLogService.logByLoginId(loginId, "POST_UPDATE", ip);
         return toPostResponse(postRepository.save(post));
+    }
+
+    // ✨ 회비 카테고리일 때만 구조화 필드를 저장 — 다른 카테고리로 바뀌면(수정 시) 함께 비운다
+    private void applyFeeFields(Post post, String category, String term, Long openingBalance, String itemsJson) {
+        boolean isFee = FEE_CATEGORY.equals(category);
+        post.setFeeTerm(isFee ? term : null);
+        post.setFeeOpeningBalance(isFee ? openingBalance : null);
+        post.setFeeItems(isFee ? parseFeeItems(itemsJson) : new ArrayList<>());
+    }
+
+    // ✨ 프론트가 멀티파트 폼 필드 하나(feeItemsJson)에 JSON 배열로 실어 보낸 내역 목록을 파싱
+    private List<FeeLedgerItem> parseFeeItems(String itemsJson) {
+        if (itemsJson == null || itemsJson.isBlank()) return new ArrayList<>();
+        try {
+            List<FeeLedgerItemDto> dtos = FEE_ITEMS_MAPPER.readValue(itemsJson, new TypeReference<List<FeeLedgerItemDto>>() {});
+            return dtos.stream()
+                    .map(d -> new FeeLedgerItem(d.type(), d.date(), d.description(), d.amount()))
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "회비 내역 형식이 올바르지 않습니다.");
+        }
+    }
+
+    // ✨ 기존 금액 + 입금 합계 - 사용 합계 = 최종 잔액
+    private long calculateFeeFinalBalance(Post post) {
+        long openingBalance = post.getFeeOpeningBalance() != null ? post.getFeeOpeningBalance() : 0L;
+        long income = 0L;
+        long expense = 0L;
+        if (post.getFeeItems() != null) {
+            for (FeeLedgerItem item : post.getFeeItems()) {
+                if ("입금".equals(item.getType())) {
+                    income += item.getAmount();
+                } else {
+                    expense += item.getAmount();
+                }
+            }
+        }
+        return openingBalance + income - expense;
     }
 
     // ✨ [신규] 파일을 물리적으로 저장하고 접근 가능한 URL 리스트를 반환하는 공통 메서드
@@ -357,6 +434,12 @@ public class BoardService {
                 ? List.of()
                 : post.getCommentsList().stream().map(this::toCommentResponse).toList();
 
+        List<FeeLedgerItemDto> feeItems = post.getFeeItems() == null
+                ? List.of()
+                : post.getFeeItems().stream()
+                        .map(i -> new FeeLedgerItemDto(i.getType(), i.getDate(), i.getDescription(), i.getAmount()))
+                        .toList();
+
         return new PostResponse(
                 post.getId(),
                 post.getTitle(),
@@ -365,14 +448,18 @@ public class BoardService {
                 post.getAuthor(),
                 post.getLoginId(),
                 post.getStudentId(),
-                post.getProfileImage(),
+                resolveLiveProfileImage(post.getLoginId(), post.getProfileImage()),
                 post.getViews(),
                 post.getLikes(),
                 post.isLikedByMe(),
                 post.getImages() == null ? List.of() : post.getImages(),
                 comments,
                 post.getCreatedAt(),
-                post.getDate()
+                post.getDate(),
+                post.getFeeTerm(),
+                post.getFeeOpeningBalance(),
+                feeItems,
+                calculateFeeFinalBalance(post)
         );
     }
 
@@ -387,7 +474,7 @@ public class BoardService {
                 comment.getAuthor(),
                 comment.getLoginId(),
                 comment.getStudentId(),
-                comment.getProfileImage(),
+                resolveLiveProfileImage(comment.getLoginId(), comment.getProfileImage()),
                 comment.getDate(),
                 comment.getCreatedAt(),
                 comment.getLikes(),
@@ -395,5 +482,19 @@ public class BoardService {
                 comment.isReply(),
                 replies
         );
+    }
+
+    // ✨ [2026-09-08 추가] 게시글/댓글 작성 시점의 프로필 사진을 스냅샷으로 저장해두다 보니, 이후 작성자가
+    // 디스코드 프로필 사진을 바꾸면 예전 사진 URL(디스코드 CDN)이 만료돼 게시판에서 깨진 이미지로
+    // 보이던 문제. 작성자가 지금도 존재하면 최신 프로필 사진을 우선 쓰고, 탈퇴 등으로 못 찾으면
+    // (또는 최신 값이 비어있으면) 기존 스냅샷을 그대로 사용한다.
+    private String resolveLiveProfileImage(String loginId, String snapshot) {
+        if (!StringUtils.hasText(loginId)) {
+            return snapshot;
+        }
+        return memberRepository.findByLoginId(loginId)
+                .map(Member::getProfileImage)
+                .filter(StringUtils::hasText)
+                .orElse(snapshot);
     }
 }

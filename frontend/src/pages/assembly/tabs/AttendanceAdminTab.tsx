@@ -1,0 +1,508 @@
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { motion } from "framer-motion";
+import {
+  Timer, Users, CheckCircle2, History, ChevronLeft, ChevronRight,
+  AlertTriangle, Download, Trash2, MessageSquare,
+} from "lucide-react";
+import { api } from "../../../api/axios";
+import { Button } from "../../../components/ui/button";
+
+type TargetStatus = {
+  loginId: string;
+  name: string;
+  studentId: string;
+  dept?: string;
+  profileImage: string | null;
+  checkedIn: boolean;
+};
+
+type AdminStatus = {
+  sessionId: number | null;
+  code: string | null;
+  status: "NONE" | "ACTIVE" | "CLOSED";
+  remainingSeconds: number;
+  checkedCount: number;
+  totalCount: number;
+  targets: TargetStatus[];
+};
+
+type HistorySession = {
+  sessionId: number;
+  title: string;
+  startedAt: string;
+  closedAt: string;
+  checkedCount: number;
+  totalCount: number;
+  targets: TargetStatus[];
+};
+
+const APPLE_GREEN = "#34C759";
+
+const formatStudentId = (id?: string | null) => {
+  if (!id) return "";
+  const strId = String(id).trim();
+  if (strId.length === 8) return strId.substring(2, 4);
+  if (strId.length === 2) return strId;
+  return strId;
+};
+
+const avatarOf = (m: { profileImage?: string | null; name: string }) =>
+  m.profileImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.name)}&background=random&color=6366f1`;
+
+const formatTime = (seconds: number) => {
+  const s = Math.max(0, seconds);
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+};
+
+// 정사각형 아바타 그리드 — 카드마다 폭이 다른 flex-wrap 대신 고정 트랙 grid로 오와 열을 정확히 맞춘다.
+// sessionId가 주어지면 클릭으로 출석/미출석을 수기 토글할 수 있다(지각자 등 사후 정정용).
+const AttendeeGrid = ({
+  items,
+  sessionId,
+  onToggled,
+}: {
+  items: TargetStatus[];
+  sessionId?: number;
+  onToggled?: () => void;
+}) => {
+  const [pending, setPending] = useState<string | null>(null);
+
+  const handleToggle = async (m: TargetStatus) => {
+    if (!sessionId || pending) return;
+    setPending(m.loginId);
+    try {
+      await api.put(`/admin/attendance/${sessionId}/targets/${m.loginId}`, { checkedIn: !m.checkedIn });
+      onToggled?.();
+    } catch {
+      alert("출석 상태 변경에 실패했습니다.");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <div className="grid gap-x-4 gap-y-7 [grid-template-columns:repeat(auto-fill,minmax(72px,1fr))]">
+      {items.map((m, idx) => (
+        <button
+          key={m.loginId || idx}
+          type="button"
+          disabled={!sessionId || pending === m.loginId}
+          onClick={() => handleToggle(m)}
+          className={`flex flex-col items-center gap-2 min-w-0 group ${sessionId ? "cursor-pointer" : "cursor-default"}`}
+          title={sessionId ? (m.checkedIn ? "클릭하면 미출석으로 변경" : "클릭하면 출석으로 변경") : undefined}
+        >
+          <div className="relative">
+            <div
+              className={`w-14 h-14 rounded-2xl overflow-hidden transition-all ${
+                m.checkedIn ? "ring-2" : "opacity-35 grayscale ring-1 ring-slate-200"
+              } ${sessionId ? "group-hover:opacity-80 group-hover:ring-slate-400" : ""} ${pending === m.loginId ? "opacity-50" : ""}`}
+              style={m.checkedIn ? ({ "--tw-ring-color": APPLE_GREEN } as CSSProperties) : undefined}
+            >
+              <img src={avatarOf(m)} className="w-full h-full object-cover" alt={m.name} />
+            </div>
+            {m.checkedIn && (
+              <div
+                className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white flex items-center justify-center"
+                style={{ backgroundColor: APPLE_GREEN }}
+              >
+                <CheckCircle2 size={11} className="text-white" strokeWidth={3} />
+              </div>
+            )}
+          </div>
+          <p className="text-[11px] font-medium text-[#1D1D1F] leading-tight text-center truncate w-full">
+            {formatStudentId(m.studentId)} {m.name}
+          </p>
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const HistoryPanel = ({
+  history,
+  onDownload,
+  onToggled,
+  onDelete,
+}: {
+  history: HistorySession[];
+  onDownload: (s: HistorySession) => void;
+  onToggled: () => void;
+  onDelete: (s: HistorySession) => Promise<void>;
+}) => {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // history prop이 갱신될 때마다 최신 상태를 다시 찾아옴 — 스냅샷을 들고 있지 않아서
+  // 토글 직후에도 상세 화면이 즉시 최신 상태로 보인다.
+  const selected = selectedId != null ? history.find((h) => h.sessionId === selectedId) ?? null : null;
+
+  const handleDeleteClick = async () => {
+    if (!selected || deleting) return;
+    if (!window.confirm(`"${selected.title}" 출석 기록을 완전히 삭제할까요?\n삭제하면 되돌릴 수 없습니다.`)) return;
+    setDeleting(true);
+    try {
+      await onDelete(selected);
+      setSelectedId(null);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="bg-[#fff] rounded-[28px] border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.05)] p-7">
+      <div className="flex items-center gap-3 mb-6">
+        {selected ? (
+          <button
+            onClick={() => setSelectedId(null)}
+            className="w-8 h-8 rounded-full hover:bg-black/[0.06] flex items-center justify-center text-[#6E6E73] transition-colors -ml-1.5"
+          >
+            <ChevronLeft size={18} />
+          </button>
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-black/[0.05] flex items-center justify-center text-[#6E6E73]">
+            <History size={15} />
+          </div>
+        )}
+        <h3 className="text-[15px] font-semibold text-[#1D1D1F] tracking-[-0.01em] flex-1 truncate">
+          {selected ? selected.title : "출석 이력"}
+        </h3>
+        {selected && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => onDownload(selected)}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-[#6E6E73] hover:text-[#1D1D1F] bg-black/[0.05] hover:bg-slate-200/70 px-3.5 py-1.5 rounded-full transition-colors"
+            >
+              <Download size={13} /> 엑셀 다운로드
+            </button>
+            <button
+              onClick={handleDeleteClick}
+              disabled={deleting}
+              className="flex items-center gap-1.5 text-[12px] font-medium disabled:opacity-50 px-3.5 py-1.5 rounded-full transition-colors"
+              style={{ color: "#FF3B30" }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "rgba(255,59,48,0.08)")}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+            >
+              <Trash2 size={13} /> {deleting ? "삭제 중…" : "삭제"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!selected &&
+        (history.length === 0 ? (
+          <div className="text-center py-14 text-[#C7C7CC] font-medium flex flex-col items-center gap-3">
+            <History size={36} className="opacity-30" />
+            <span className="text-[13px]">저장된 출석 기록이 없습니다</span>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {history.map((session) => (
+              <button
+                key={session.sessionId}
+                onClick={() => setSelectedId(session.sessionId)}
+                className="w-full flex items-center justify-between gap-4 p-3.5 rounded-2xl hover:bg-black/[0.04] transition-colors text-left"
+              >
+                <div className="min-w-0">
+                  <p className="text-[14px] font-medium text-[#1D1D1F] truncate">{session.title}</p>
+                  <p className="text-[12px] text-[#8E8E93] mt-0.5">
+                    {(session.startedAt || "").slice(0, 10)} · {session.checkedCount} / {session.totalCount}명 출석
+                  </p>
+                </div>
+                <ChevronRight size={16} className="text-[#C7C7CC] shrink-0" />
+              </button>
+            ))}
+          </div>
+        ))}
+
+      {selected && (
+        <>
+          <p className="text-[12px] text-[#8E8E93] mb-5">항목을 클릭하면 출석/미출석을 수기로 정정할 수 있습니다</p>
+          <AttendeeGrid items={selected.targets} sessionId={selected.sessionId} onToggled={onToggled} />
+        </>
+      )}
+    </div>
+  );
+};
+
+export const AttendanceAdminTab = () => {
+  const [status, setStatus] = useState<AdminStatus | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [remaining, setRemaining] = useState(0);
+  const [history, setHistory] = useState<HistorySession[]>([]);
+  const [messageId, setMessageId] = useState("");
+  // ✨ [2026-10-01] 그 달 총회 공지(디스코드 동아리공지)를 자동으로 찾아 그 공지의 ✅로 출석 시작 — 메시지 ID를 직접 찾지 않아도 됨
+  const now = new Date();
+  const [noticeYm, setNoticeYm] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
+  const [noticeState, setNoticeState] = useState<{ loading: boolean; found?: boolean; notice?: any; message?: string }>({ loading: true });
+  const [showManual, setShowManual] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchStatus = async () => {
+    try {
+      const res = await api.get("/admin/attendance/status");
+      setStatus(res.data);
+      setRemaining(res.data.remainingSeconds ?? 0);
+    } catch {
+      // 폴링 중 일시적 오류는 무시
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const res = await api.get("/admin/attendance/history");
+      setHistory(res.data);
+    } catch {
+      // 조용히 무시 — 다음 갱신에서 재시도
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    fetchHistory();
+    pollRef.current = setInterval(fetchStatus, 3000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (tickRef.current) clearInterval(tickRef.current);
+    if (status?.status === "ACTIVE") {
+      tickRef.current = setInterval(() => setRemaining((prev) => Math.max(0, prev - 1)), 1000);
+    }
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+    };
+  }, [status?.status, status?.sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNoticeState({ loading: true });
+    api.get("/admin/attendance/notice", { params: noticeYm })
+      .then((res) => { if (!cancelled) setNoticeState({ loading: false, ...res.data }); })
+      .catch((e) => { if (!cancelled) setNoticeState({ loading: false, found: false, message: e?.response?.data?.message || "디스코드 공지를 읽지 못했어요." }); });
+    return () => { cancelled = true; };
+  }, [noticeYm.year, noticeYm.month]);
+
+  const handleStartFromNotice = async () => {
+    if (starting) return;
+    setStarting(true);
+    setErrorMsg("");
+    try {
+      const res = await api.post("/admin/attendance/start-from-notice", noticeYm);
+      const skipped: string[] = res.data?.skippedReactors || [];
+      await fetchStatus();
+      if (skipped.length > 0) {
+        alert(`출석이 시작되었습니다.\n\n다만 ✅ 반응을 남긴 사람 중 ${skipped.length}명은 웹사이트 회원과 매칭되지 않아 대상자에서 제외했습니다:\n${skipped.join(", ")}`);
+      }
+    } catch (e: any) {
+      setErrorMsg(e?.response?.data?.message || "출석 시작에 실패했습니다");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const shiftNoticeMonth = (delta: number) =>
+    setNoticeYm((p) => {
+      const d = new Date(p.year, p.month - 1 + delta, 1);
+      return { year: d.getFullYear(), month: d.getMonth() + 1 };
+    });
+
+  const handleStartFromDiscord = async () => {
+    if (!messageId.trim() || starting) return;
+    setStarting(true);
+    setErrorMsg("");
+    try {
+      const res = await api.post("/admin/attendance/start-from-discord", { messageId: messageId.trim() });
+      setMessageId("");
+      const skipped: string[] = res.data?.skippedReactors || [];
+      await fetchStatus();
+      if (skipped.length > 0) {
+        alert(
+          `출석이 시작되었습니다.\n\n다만 ✅ 반응을 남긴 사람 중 ${skipped.length}명은 웹사이트 회원과 매칭되지 않아 대상자에서 제외했습니다:\n${skipped.join(", ")}`
+        );
+      }
+    } catch (e: any) {
+      const data = e?.response?.data;
+      setErrorMsg(data?.message || "출석 시작에 실패했습니다");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const handleClose = async () => {
+    if (!status?.sessionId) return;
+    if (!window.confirm("출석을 종료할까요?")) return;
+    try {
+      await api.post(`/admin/attendance/${status.sessionId}/close`);
+      await fetchStatus();
+      await fetchHistory();
+    } catch {
+      alert("출석 종료 중 오류가 발생했습니다.");
+    }
+  };
+
+  const handleDownload = async (session: HistorySession) => {
+    try {
+      const res = await api.get(`/admin/attendance/history/${session.sessionId}/download`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${session.title || "attendance"}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert("엑셀 다운로드에 실패했습니다.");
+    }
+  };
+
+  const handleDeleteHistory = async (session: HistorySession) => {
+    try {
+      await api.delete(`/admin/attendance/history/${session.sessionId}`);
+      await fetchHistory();
+    } catch {
+      alert("출석 기록 삭제에 실패했습니다.");
+    }
+  };
+
+  const isActive = status?.status === "ACTIVE";
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+      <div className="mb-6 md:mb-8">
+        <h1 className="text-[28px] md:text-[34px] font-bold text-[#1D1D1F] tracking-[-0.02em] leading-tight">출석 설정</h1>
+        <p className="text-sm md:text-[15px] text-[#6E6E73] mt-1.5">디스코드 공지에 ✅를 누른 부원을 대상으로, 인증번호로 출석을 받아요.</p>
+      </div>
+
+      {!isActive && (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,420px)_1fr] gap-6 items-start">
+          <div className="bg-[#fff] rounded-[28px] border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.05)] p-10">
+            <div className="w-11 h-11 rounded-full bg-black/[0.05] flex items-center justify-center text-[#8E8E93] mb-6">
+              <Timer size={20} />
+            </div>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <h2 className="text-[19px] font-semibold text-[#1D1D1F] tracking-[-0.01em]">총회 공지로 출석 시작</h2>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button onClick={() => shiftNoticeMonth(-1)} aria-label="이전 달" className="w-7 h-7 rounded-full text-[#6E6E73] hover:bg-black/[0.05] flex items-center justify-center">‹</button>
+                <span className="text-[13px] font-semibold text-[#1D1D1F] tabular-nums w-[64px] text-center">{noticeYm.year % 100}년 {noticeYm.month}월</span>
+                <button onClick={() => shiftNoticeMonth(1)} aria-label="다음 달" className="w-7 h-7 rounded-full text-[#6E6E73] hover:bg-black/[0.05] flex items-center justify-center">›</button>
+              </div>
+            </div>
+            <p className="text-[13px] text-[#8E8E93] leading-relaxed mb-4">
+              디스코드 <b className="text-[#6E6E73] font-semibold">동아리공지</b>에서 이 달 총회 공지를 자동으로 찾아, ✅를 누른 부원을 대상으로 출석을 시작해요.
+            </p>
+
+            <div className="rounded-2xl bg-black/[0.03] p-4 mb-5 min-h-[92px]">
+              {noticeState.loading ? (
+                <p className="text-[13px] text-[#8E8E93]">공지를 찾는 중이에요…</p>
+              ) : noticeState.found && noticeState.notice ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-[12px] font-semibold text-[#8E8E93]">{(noticeState.notice.createdAt || "").slice(0, 10)} 공지</span>
+                    <a href={noticeState.notice.jumpUrl} target="_blank" rel="noopener noreferrer" className="text-[12px] font-semibold text-[#0071E3] hover:underline">디스코드에서 보기</a>
+                  </div>
+                  <p className="text-[13px] text-[#1D1D1F] leading-relaxed line-clamp-3 whitespace-pre-line">
+                    {String(noticeState.notice.content || "").replace(/@everyone|<@&?\d+>/g, "").trim()}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 mt-2.5">
+                    {(noticeState.notice.reactions || []).map((r: any) => (
+                      <span key={r.emoji} className="inline-flex items-center gap-1 h-6 px-2 rounded-full bg-[#fff] border border-black/[0.06] text-[12px] font-semibold text-[#1D1D1F]">{r.emoji} {r.count}</span>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-[13px] text-[#8E8E93]">{noticeState.message || "이 달 총회 공지를 찾지 못했어요."}</p>
+              )}
+            </div>
+
+            {errorMsg && (
+              <div className="bg-red-50/70 border border-red-100 rounded-2xl p-4 mb-5">
+                <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: "#FF3B30" }}>
+                  <AlertTriangle size={14} /> {errorMsg}
+                </div>
+              </div>
+            )}
+
+            <Button
+              onClick={handleStartFromNotice}
+              disabled={!noticeState.found || starting}
+              className="w-full bg-[#0071E3] hover:bg-[#0077ED] text-white py-6 rounded-2xl font-semibold text-[15px] flex items-center justify-center gap-2 shadow-none disabled:opacity-40"
+            >
+              <MessageSquare size={16} /> {starting ? "시작하는 중…" : `${noticeYm.month}월 총회 공지로 출석 시작`}
+            </Button>
+
+            {/* 공지를 못 찾을 때를 위한 예전 방식 — 메시지 ID 직접 입력 */}
+            <button onClick={() => setShowManual((v) => !v)} className="mt-4 text-[12px] font-semibold text-[#8E8E93] hover:text-[#1D1D1F]">
+              {showManual ? "직접 입력 닫기" : "메시지 ID로 직접 시작하기"}
+            </button>
+            {showManual && (
+              <div className="mt-3">
+                <p className="text-[12px] text-[#C7C7CC] mb-2">(디스코드 개발자 모드 켜기 → 메시지 우클릭 → "메시지 ID 복사")</p>
+                <div className="flex items-center gap-3.5 border border-black/[0.08] rounded-2xl p-3 mb-3 focus-within:border-slate-300">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={messageId}
+                    onChange={(e) => setMessageId(e.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="메시지 ID 붙여넣기"
+                    className="min-w-0 flex-1 text-[14px] font-medium text-[#1D1D1F] outline-none placeholder:text-[#C7C7CC] placeholder:font-normal"
+                  />
+                </div>
+                <Button
+                  onClick={handleStartFromDiscord}
+                  disabled={!messageId.trim() || starting}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white py-5 rounded-2xl font-semibold text-[14px] shadow-none"
+                >
+                  이 메시지로 출석 시작
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <HistoryPanel history={history} onDownload={handleDownload} onToggled={fetchHistory} onDelete={handleDeleteHistory} />
+        </div>
+      )}
+
+      {isActive && status && (
+        <div className="space-y-6">
+          <div className="bg-[#fff] rounded-[28px] border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.05)] p-10 flex flex-col items-center justify-center text-center relative">
+            <div className="absolute top-6 right-6 flex items-center gap-1.5 bg-black/[0.05] text-[#6E6E73] text-[13px] font-medium px-3 py-1.5 rounded-full">
+              <Timer size={13} /> {formatTime(remaining)}
+            </div>
+            <p className="text-[12px] font-medium text-[#8E8E93] uppercase tracking-[0.12em] mb-3">인증번호</p>
+            <h2 className="text-[76px] font-semibold text-[#1D1D1F] leading-none tracking-[0.03em] tabular-nums">
+              {status.code}
+            </h2>
+            <p className="text-[13px] text-[#8E8E93] mt-5">
+              {status.checkedCount} / {status.totalCount}명 출석
+            </p>
+            <button
+              onClick={handleClose}
+              className="mt-7 text-[13px] font-medium text-[#6E6E73] hover:text-[#1D1D1F] border border-black/[0.08] hover:border-slate-300 rounded-full px-5 py-2 transition-colors"
+            >
+              출석 종료
+            </button>
+          </div>
+
+          <div className="bg-[#fff] rounded-[28px] border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.05)] p-9">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <Users size={16} className="text-[#8E8E93]" />
+                <h3 className="text-[13px] font-semibold text-[#6E6E73] uppercase tracking-[0.08em]">실시간 출석 현황</h3>
+              </div>
+            </div>
+            <p className="text-[12px] text-[#8E8E93] mb-6">지각자 등은 항목을 클릭해 수기로 출석 처리할 수 있습니다</p>
+            <AttendeeGrid items={status.targets} sessionId={status.sessionId ?? undefined} onToggled={fetchStatus} />
+          </div>
+
+          <HistoryPanel history={history} onDownload={handleDownload} onToggled={fetchHistory} onDelete={handleDeleteHistory} />
+        </div>
+      )}
+    </motion.div>
+  );
+};

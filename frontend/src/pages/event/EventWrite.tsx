@@ -1,8 +1,10 @@
 import { api } from "../../api/axios";
 import { useState, useEffect, useRef } from "react";
+import { DATE_MASK, DateMaskInput, isValidDate, splitDateRange } from "../../components/ui/DateMaskInput";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Save, Type, Image as ImageIcon, Link as LinkIcon, X, Upload } from "lucide-react";
 import { Button } from "../../components/ui/button";
+import { FileDropZone } from "../../components/ui/FileDropZone";
 
 // ✨ user, fetchEvents 프롭을 추가하여 로그 연동 및 목록 갱신을 처리합니다.
 export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any) => {
@@ -20,9 +22,19 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
 
   // ✨ 실제 서버 전송용 파일 객체를 담는 state
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
+
+  // ✨ [2026-09-30] 여러 날 행사면 종료일 — 저장할 때 "2026.04.27 ~ 2026.04.29"로 합쳐서 date에 넣는다
+  const [dateEnd, setDateEnd] = useState("");
 
   useEffect(() => {
-    if (event) setFormData(event);
+    // 예전에 "2026.4.27"처럼 한 자리로 적힌 날짜도 수정 화면에서는 "2026.04.27"로 맞춰 보여준다
+    if (event) {
+      const [start, end] = splitDateRange(event.date);
+      setFormData({ ...event, date: start });
+      setDateEnd(end);
+    }
   }, [event]);
 
   // ✨ 로컬 파일 선택 시 호출되는 핸들러
@@ -39,16 +51,25 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
   };
 
   const handlePublish = async () => {
+    if (submitLockRef.current) return;
     if (!formData.title || !formData.date || !formData.location || !formData.content) {
       return alert("정보를 모두 입력해주세요. ⚠️");
     }
+    if (!isValidDate(formData.date)) {
+      return alert("시작일을 2026.04.27처럼 숫자 8자리로 입력해주세요. (없는 날짜는 안 돼요)");
+    }
+    if (dateEnd && (!isValidDate(dateEnd) || dateEnd < formData.date)) {
+      return alert("종료일을 확인해주세요. 하루 행사면 비워두면 돼요.");
+    }
 
+    submitLockRef.current = true;
+    setIsSubmitting(true);
     try {
       // ✨ JSON 객체 대신 FormData 사용 (파일 전송을 위함)
       const submitData = new FormData();
       submitData.append("category", formData.category);
       submitData.append("title", formData.title);
-      submitData.append("date", formData.date);
+      submitData.append("date", dateEnd && dateEnd !== formData.date ? `${formData.date} ~ ${dateEnd}` : formData.date);
       submitData.append("location", formData.location);
       submitData.append("content", formData.content);
 
@@ -76,11 +97,14 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
     } catch (error) {
       console.error("저장 실패:", error);
       alert("서버 통신 중 오류가 발생했습니다.");
+    } finally {
+      setIsSubmitting(false);
+      submitLockRef.current = false;
     }
   };
 
   return (
-    <div className="min-h-screen bg-white pb-20 pt-32">
+    <div className="write-page min-h-screen bg-white pb-20 pt-32">
       <div className="max-w-4xl mx-auto px-6">
         <div className="flex justify-between items-center mb-12">
           <button
@@ -91,9 +115,10 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
           </button>
           <Button
             onClick={handlePublish}
+            disabled={isSubmitting}
             className="bg-indigo-600 text-white font-bold px-8 py-6 rounded-2xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 active:scale-95 transition-all"
           >
-            {event ? "수정 완료" : "등록 완료"}
+            {isSubmitting ? "처리 중..." : (event ? "수정 완료" : "등록 완료")}
           </Button>
         </div>
 
@@ -116,19 +141,28 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
             value={formData.title}
             onChange={(e) => setFormData({ ...formData, title: e.target.value })}
             placeholder="행사 제목을 입력하세요"
-            className="w-full py-4 text-4xl font-black text-slate-900 border-none outline-none tracking-tight placeholder:text-slate-200"
+            className="bare-field w-full py-4 text-3xl md:text-4xl font-bold text-[#1D1D1F] border-none outline-none tracking-[-0.02em] placeholder:text-[#D1D1D6]"
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 ml-1 uppercase">Date</label>
-              <input
-                type="text"
-                placeholder="예: 2026.04.15"
-                value={formData.date}
-                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                className="w-full px-6 py-4 bg-slate-50 rounded-2xl outline-none font-bold focus:ring-2 focus:ring-indigo-500 transition-all"
-              />
+              {/* ✨ [2026-09-30] 숫자만 입력하면 2026.04.27 모양으로 점이 자동으로 들어간다. 여러 날 행사면 종료일도 */}
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <DateMaskInput size="lg" value={formData.date} onChange={(v) => setFormData({ ...formData, date: v })} />
+                <span className="text-slate-300 font-bold">~</span>
+                <DateMaskInput size="lg" value={dateEnd} onChange={setDateEnd} />
+              </div>
+              <p className={`text-[11px] ml-1 ${
+                (formData.date.length === DATE_MASK.length && !isValidDate(formData.date)) || (dateEnd.length === DATE_MASK.length && (!isValidDate(dateEnd) || dateEnd < formData.date))
+                  ? "text-rose-500" : "text-slate-400"
+              }`}>
+                {formData.date.length === DATE_MASK.length && !isValidDate(formData.date)
+                  ? "없는 날짜예요. 다시 확인해 주세요."
+                  : dateEnd.length === DATE_MASK.length && (!isValidDate(dateEnd) || dateEnd < formData.date)
+                    ? "종료일을 확인해 주세요. (시작일보다 빠르거나 없는 날짜)"
+                    : "숫자 8자리만 입력하면 돼요 (예: 20260427). 하루 행사면 오른쪽(종료일)은 비워두세요."}
+              </p>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 ml-1 uppercase">Location</label>
@@ -145,6 +179,7 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
           {/* ✨ 개선된 이미지 섹션: 파일 업로드 + 링크 입력 */}
           <div className="space-y-4">
             <label className="text-[10px] font-black text-slate-400 ml-1 uppercase tracking-widest">Event Image</label>
+            <FileDropZone inputRef={fileInputRef} label="사진을 놓으면 올라가요">
             <div className="flex flex-col gap-4">
               <div className="flex gap-3">
                 <Button
@@ -152,7 +187,7 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
                   variant="outline"
                   className="flex-1 h-14 rounded-2xl border-dashed border-2 border-slate-200 text-slate-500 font-bold flex items-center gap-2 hover:bg-slate-50 transition-all"
                 >
-                  <Upload size={18} /> 파일 선택
+                  <Upload size={18} /> 파일 선택 · 끌어다 놓기
                 </Button>
                 <input
                   type="file"
@@ -201,6 +236,7 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
                 )}
               </AnimatePresence>
             </div>
+            </FileDropZone>
           </div>
 
           <div className="pt-6 border-t border-slate-50">
@@ -208,7 +244,7 @@ export const EventWrite = ({ onNavigate, onSave, event, fetchEvents, user }: any
               value={formData.content}
               onChange={(e) => setFormData({ ...formData, content: e.target.value })}
               placeholder="행사에 대한 상세 내용을 자유롭게 입력하세요..."
-              className="w-full min-h-[400px] text-lg font-medium outline-none resize-none leading-relaxed placeholder:text-slate-200"
+              className="bare-field w-full min-h-[400px] text-lg font-medium outline-none resize-none leading-relaxed placeholder:text-[#D1D1D6]"
             />
           </div>
         </div>

@@ -1,22 +1,24 @@
 import { api } from "../../api/axios";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, LogOut, ChevronRight } from "lucide-react";
-import { Button } from "../ui/button";
+import { Menu, X, LogOut, ChevronRight, Printer } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom"; // ✨ 라우터 훅 추가
 
-// ✨ 여기에 디스코드 서버 아이콘 링크를 넣어주세요!
-const DISCORD_SERVER_ICON = "https://cdn.discordapp.com/icons/462157565229268993/70266f261f01165295208967e73f0555.webp?size=160&quality=lossless";
+// ✨ [수정] 서버 아이콘을 하드코딩하면 디스코드에서 아이콘을 바꿀 때마다 깨지므로,
+// 최초 렌더링 시의 임시값으로만 쓰고 실제로는 /api/guild/icon에서 실시간으로 받아온다.
+const FALLBACK_DISCORD_SERVER_ICON = "https://cdn.discordapp.com/icons/462157565229268993/70266f261f01165295208967e73f0555.webp?size=160&quality=lossless";
 
 // 전체 메뉴 데이터
 const navLinks = [
   { name: "홈", id: "home" },
+  { name: "명예의 전당", id: "halloffame" }, // ✨ [신규] 대회 수상 기록 — 홈 바로 옆
   { name: "주요행사", id: "event" },
   { name: "공지사항", id: "notice" },
   { name: "게시판", id: "board" },
   { name: "동아리소개", id: "about" },
   { name: "자주 묻는 질문", id: "faq" },
   { name: "총회", id: "assembly" },
+  { name: "OJ", id: "oj" }, // ✨ [신규] 온라인저지 — 총회 오른쪽, 로그인 시에만 노출
   { name: "관리", id: "admin" }, // ✨ 관리자 전용 메뉴 추가
 ];
 
@@ -26,6 +28,7 @@ interface NavbarProps {
   isLoggedIn: boolean;
   userRole: string; // ✨ 관리자 권한 확인을 위해 추가
   onLogout: () => void;
+  user?: any;
 }
 
 export const Navbar = ({ 
@@ -33,37 +36,83 @@ export const Navbar = ({
   currentPage, 
   isLoggedIn, 
   userRole, 
-  onLogout 
+  onLogout,
+  user,
 }: NavbarProps) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState(currentPage); // ✨ 현재 활성화된 밑줄 상태
-  
+  const [guildIconUrl, setGuildIconUrl] = useState<string>(FALLBACK_DISCORD_SERVER_ICON);
+
   const location = useLocation(); // ✨ 현재 경로 확인용
   const navigate = useNavigate(); // ✨ 페이지 이동용
 
-  // ✨ 컴포넌트 마운트 시 및 로그인 상태 변경 시 사용자 정보 로드
+  // ✨ [신규] 디스코드 서버 아이콘을 실시간으로 조회 (아이콘이 바뀌어도 항상 최신 상태 유지)
   useEffect(() => {
-    const savedUser = localStorage.getItem("currentUser");
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    } else {
-      setUser(null);
-    }
-  }, [isLoggedIn]);
+    const fetchGuildIcon = async () => {
+      try {
+        const res = await api.get("/guild/icon");
+        if (res.data?.iconUrl) {
+          setGuildIconUrl(res.data.iconUrl);
+        }
+      } catch (e) {
+        // 조회 실패 시 기존 값(폴백)을 그대로 사용
+      }
+    };
+    fetchGuildIcon();
+  }, []);
 
-  // ✨ 스크롤 위치를 감지하여 밑줄(activeTab)을 자동으로 변경 (ScrollSpy)
+  // ✨ [2026-09-08 수정] 예전에는 여기서 탭 아이콘(favicon)을 디스코드 CDN 주소로 덮어썼는데,
+  // 그 주소는 (1) 서버 아이콘을 바꾸면 해시가 달라져 예전 주소가 404가 되고 (2) 조회 전 초기값이
+  // 만료된 폴백 주소여서, 구글이 페이지를 렌더링해 파비콘을 가져갈 때 깨진 주소를 보고 검색 결과에
+  // 로고를 못 띄우는 원인이 됐다. 탭/검색 로고는 index.html의 고정 파일(/favicon.ico)로 고정하고,
+  // 화면에 보이는 네비바 로고만 실시간 서버 아이콘을 쓴다.
+
+  // 드로어가 열린 동안 배경 스크롤을 막고 Escape로 닫힌다.
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsMobileMenuOpen(false);
+    };
+    // ✨ [2026-09-30] 최상위(html)가 스크롤을 맡으므로 body가 아니라 html을 잠근다 (index.css의 .scroll-locked — 스크롤바 폭 보정 포함)
+    document.documentElement.classList.add("scroll-locked");
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      document.documentElement.classList.remove("scroll-locked");
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isMobileMenuOpen]);
+
+  // ✨ [2026-09-29] 메뉴를 눌러 부드럽게 스크롤되는 동안에는 스크롤 감지가 선택 표시를 바꾸지 못하게 잠근다.
+  // (안 그러면 지나가는 중간 섹션마다 선택 표시가 왔다 갔다 해서 버벅여 보였음) 스크롤이 멈추면 잠금 해제.
+  const scrollLockRef = useRef(false);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✨ 스크롤 위치를 감지하여 선택 표시(activeTab)를 자동으로 변경 (ScrollSpy)
   useEffect(() => {
     // 메인 페이지가 아닐 때는 부모가 주는 currentPage를 그대로 따름
     if (location.pathname !== "/") {
-      setActiveTab(currentPage);
+      // ✨ [2026-09-30] /oj/12, /assembly/member/3 같은 하위 페이지에서도 상위 메뉴에 선택 표시가 남도록 첫 경로만 본다
+      const section = currentPage.split("/")[0];
+      setActiveTab(section === "hall-of-fame" ? "halloffame" : section);
       return;
+    }
+
+    // ✨ [2026-09-29] 다른 페이지에서 "/#faq" 처럼 섹션으로 들어온 경우 — App이 그 섹션으로 바로 이동시키는 동안
+    // 맨 위(홈) 기준으로 선택 표시가 잠깐 바뀌었다가 다시 이동하던 것을 막는다. 목표 섹션으로 먼저 고정하고 잠근다.
+    const hashTarget = location.hash.replace("#", "");
+    const lockForHash = Boolean(hashTarget);
+    if (lockForHash) {
+      setActiveTab(hashTarget === "events" ? "event" : hashTarget);
+      scrollLockRef.current = true;
+      if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+      scrollIdleTimerRef.current = setTimeout(() => { scrollLockRef.current = false; }, 900);
     }
 
     const handleScroll = () => {
       // 감지할 섹션 리스트 (Home.tsx의 id와 navLinks의 id 매칭)
       const sections = [
         { id: "home", navId: "home" },
+        { id: "halloffame", navId: "halloffame" },
         { id: "events", navId: "event" },
         { id: "notice", navId: "notice" },
         { id: "board", navId: "board" },
@@ -83,29 +132,115 @@ export const Navbar = ({
           }
         }
       }
+      // ✨ [2026-09-30] 맨 아래까지 내렸으면 마지막 섹션(자주 묻는 질문) — 페이지 끝에 있어 제목이 기준선(150px)까지
+      // 올라오지 못해서, 끝까지 내려도 "동아리소개"로 잡히던 문제
+      const scroller = document.documentElement;
+      if (window.innerHeight + window.scrollY >= scroller.scrollHeight - 4) {
+        const last = [...sections].reverse().find((section) => document.getElementById(section.id));
+        if (last) currentSection = last.navId;
+      }
+
       setActiveTab(currentSection);
+
+      // ✨ [2026-09-30] 주소의 #섹션을 지금 보고 있는 섹션으로 맞춘다 — 다른 페이지에서 "/#faq"로 들어온 뒤 위로 올라가도
+      // 주소가 #faq로 남아 있어서 새로고침하면 전부 자주 묻는 질문으로 가버렸다. 라우터를 거치지 않고(replaceState)
+      // 주소만 바꾸므로 화면이 다시 그려지거나 스크롤이 튀지 않는다. 홈(맨 위)은 해시 없이 "/".
+      if (window.location.pathname === "/") {
+        const wantHash = currentSection === "home" ? "" : `#${currentSection === "event" ? "events" : currentSection}`;
+        if (window.location.hash !== wantHash) {
+          window.history.replaceState(window.history.state, "", `/${window.location.search}${wantHash}`);
+        }
+      }
     };
 
-    window.addEventListener("scroll", handleScroll);
-    handleScroll(); // 초기 로드 시 실행
+    // 스크롤 이벤트마다 계산하지 않고 프레임당 한 번만 (requestAnimationFrame)
+    let frame = 0;
+    const onScroll = () => {
+      if (scrollLockRef.current) {
+        // 프로그램 스크롤 중 — 멈춘 뒤 150ms가 지나면 잠금을 풀고 현재 위치로 한 번 맞춘다
+        if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+        scrollIdleTimerRef.current = setTimeout(() => {
+          scrollLockRef.current = false;
+          handleScroll();
+        }, 150);
+        return;
+      }
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        handleScroll();
+      });
+    };
 
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [location.pathname, currentPage]);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    if (!lockForHash) handleScroll(); // 초기 로드 시 실행
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [location.pathname, location.hash, currentPage]);
+
+  // ✨ [2026-09-29] 선택 표시(유리 알약) 위치를 메뉴 줄 안에서 직접 잰다(offsetLeft/offsetWidth).
+  // 라이브러리의 공유 레이아웃(layoutId)은 페이지 전환 때 스크롤 변화를 위치 계산에 섞어 알약이 아래에서
+  // 튀어나오는 것처럼 보였다 — 메뉴 줄 기준 좌표만 쓰면 스크롤과 무관하게 좌우로만 움직인다.
+  const menuItemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [indicator, setIndicator] = useState<{ x: number; w: number; h: number; visible: boolean } | null>(null);
+  // 첫 위치는 애니메이션 없이 바로 놓고, 그 다음부터 미끄러지게 (새로고침 때 왼쪽 끝에서 날아오지 않도록)
+  const [indicatorReady, setIndicatorReady] = useState(false);
+  const visibleLinkKey = navLinks
+    .filter((link) => (link.id === "assembly" || link.id === "oj") ? isLoggedIn : link.id === "admin" ? isLoggedIn && userRole === "ADMIN" : true)
+    .map((link) => link.id)
+    .join(",");
+
+  const measureIndicator = useCallback(() => {
+    const el = menuItemRefs.current[activeTab];
+    if (!el || el.offsetWidth === 0) {
+      setIndicator((prev) => (prev ? { ...prev, visible: false } : prev));
+      return;
+    }
+    // ✨ [2026-09-30] "홈"처럼 글자가 짧아 버튼 폭이 높이보다 좁으면 양 끝 원이 서로 엇갈려 초승달처럼 겹쳐 보였다 —
+    // 알약 폭을 최소 높이만큼(=동그라미)으로 잡고 버튼 가운데에 맞춘다.
+    const h = el.offsetHeight;
+    const w = Math.max(el.offsetWidth, h);
+    setIndicator({ x: el.offsetLeft - (w - el.offsetWidth) / 2, w, h, visible: true });
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!indicator || indicatorReady) return;
+    const id = setTimeout(() => setIndicatorReady(true), 80);
+    return () => clearTimeout(id);
+  }, [indicator, indicatorReady]);
+
+  useLayoutEffect(() => {
+    measureIndicator();
+  }, [measureIndicator, visibleLinkKey]);
+
+  useEffect(() => {
+    window.addEventListener("resize", measureIndicator);
+    // 웹폰트가 늦게 적용되면 글자 폭이 바뀌므로 한 번 더 잰다
+    document.fonts?.ready.then(measureIndicator).catch(() => {});
+    return () => window.removeEventListener("resize", measureIndicator);
+  }, [measureIndicator]);
 
   const handleNavigate = (id: string) => {
     // ✨ 메인 페이지에서 스크롤로 이동할 섹션들
-    const scrollSections = ["home", "event", "notice", "board", "about", "faq"];
+    const scrollSections = ["home", "halloffame", "event", "notice", "board", "about", "faq"];
 
     if (scrollSections.includes(id)) {
       // Home.tsx의 id="events" 와 맞추기 위한 예외 처리 (event -> events)
       const targetId = id === "event" ? "events" : id;
       
-      setActiveTab(id); // 클릭 즉시 밑줄 이동
+      setActiveTab(id); // 클릭 즉시 선택 표시 이동
 
       if (location.pathname === "/") {
-        // 이미 메인 페이지라면 부드럽게 스크롤
+        // 이미 메인 페이지라면 부드럽게 스크롤 — 스크롤이 끝날 때까지 스크롤 감지 잠금
         const element = document.getElementById(targetId);
         if (element) {
+          scrollLockRef.current = true;
+          if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+          // 이미 그 위치라 스크롤 이벤트가 안 나는 경우를 대비한 안전장치
+          scrollIdleTimerRef.current = setTimeout(() => { scrollLockRef.current = false; }, 1200);
           element.scrollIntoView({ behavior: "smooth" });
         }
       } else {
@@ -114,34 +249,25 @@ export const Navbar = ({
       }
     } else {
       // ✨ 총회, 관리, 로그인 등 "새 페이지"로 이동할 때는 스크롤을 최상단으로 리셋
+      setActiveTab(id); // 새 페이지를 그리는 것과 같은 순간에 알약도 출발
       onNavigate(id);
-      window.scrollTo(0, 0); 
+      // 새 페이지는 즉시 맨 위에서 시작 (CSS의 scroll-behavior: smooth 때문에 기본값이면 쫘라락 올라감)
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     }
     
     setIsMobileMenuOpen(false);
   };
 
-  // ✨ 로그아웃 클릭 시 로그를 먼저 남기고 부모의 onLogout 실행
-  const handleLogoutClick = async () => {
-    const currentUserInfo = JSON.parse(localStorage.getItem("currentUser") || "{}");
-
-    if (currentUserInfo && currentUserInfo.name) {
-      try {
-        await api.post("/members/logout-log", {
-          name: currentUserInfo.name,
-          studentId: currentUserInfo.studentId
-        });
-      } catch (e) {
-        console.error("로그아웃 로그 기록 실패", e);
-      }
-    }
-
+  // ✨ [2026-09-29] 로그아웃 기록·토큰 폐기는 App.handleLogout이 확인창 이후 한 번에 처리한다
+  // (여기서도 기록하면 기록이 두 번 남고, 확인창에서 취소해도 로그아웃 기록이 남았었음)
+  const handleLogoutClick = () => {
     onLogout();
     setIsMobileMenuOpen(false);
   };
 
   const visibleLinks = navLinks.filter(link => {
     if (link.id === "assembly") return isLoggedIn;
+    if (link.id === "oj") return isLoggedIn;
     if (link.id === "admin") return isLoggedIn && userRole === "ADMIN";
     return true;
   });
@@ -149,52 +275,89 @@ export const Navbar = ({
   return (
     <>
       {/* h-16(모바일) / lg:h-20(데스크탑) 으로 반응형 높이 설정 */}
-      <nav className="fixed top-0 left-0 right-0 z-[100] bg-white/80 backdrop-blur-xl border-b border-slate-100 h-16 lg:h-20 flex items-center shadow-sm">
-        <div className="w-full px-8 md:px-12 flex items-center justify-between">
+      <nav aria-label="주요 메뉴" className="liquid-glass fixed top-0 left-0 right-0 z-[100] h-16 lg:h-[72px] flex items-center border-x-0 border-t-0 rounded-none">
+        <div className="w-full max-w-[1480px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
 
           {/* 로고 영역 - 데스크탑에서는 다시 w-10 h-10으로 복구 */}
-          <div 
-            className="flex items-center gap-3 cursor-pointer shrink-0" 
+          <button
+            type="button"
+            aria-label="DEVSIGN 홈으로 이동"
+            className="flex items-center gap-2.5 cursor-pointer shrink-0 rounded-full focus-visible:outline-none"
             onClick={() => handleNavigate("home")}
           >
-            <div className="w-9 h-9 lg:w-10 lg:h-10 rounded-xl overflow-hidden shadow-lg border border-slate-100 flex items-center justify-center bg-white group hover:scale-105 transition-transform">
-              <img 
-                src={DISCORD_SERVER_ICON} 
-                alt="DEVSIGN" 
+            <div className="w-9 h-9 rounded-[11px] overflow-hidden shadow-apple-sm border border-black/5 flex items-center justify-center bg-white transition-transform duration-200 hover:scale-105">
+              <img
+                src={guildIconUrl}
+                alt="DEVSIGN"
                 className="w-full h-full object-cover"
                 onError={(e: any) => {
-                  e.target.style.display = 'none'; 
+                  e.target.style.display = 'none';
+                }}
+                onLoad={(e: any) => {
+                  // ✨ 이전에 실패한(예: 만료된 폴백 URL) 요청 때문에 onError가 display:none을 남겨둔
+                  // 상태에서, 이후 진짜 아이콘이 성공적으로 로드돼도 계속 숨겨져 있던 버그 수정
+                  e.target.style.display = '';
                 }}
               />
             </div>
-            <span className="font-bold text-xl lg:text-2xl text-slate-900 tracking-tight">
+            <span className="font-[800] text-[19px] text-slate-900 tracking-[-0.035em]">
               DEVSIGN
             </span>
-          </div>
+          </button>
 
           {/* 중앙 메뉴 영역 - 데스크탑 폰트 크기 및 패딩 복구 */}
-          <div className="hidden lg:flex items-center gap-10">
+          {/* ✨ [2026-09-29] 리퀴드 글라스 메뉴 — 평평한 메뉴 줄 위를 떠 있는 유리 알약 하나가 눌린 메뉴까지
+              좌우로 미끄러져 이어서 이동한다. 거리와 상관없이 같은 시간(duration 기반 스프링)에 도착해서
+              맨 끝 ↔ 맨 앞처럼 멀리 가도 과하게 튕기지 않는다. 누름 효과는 글자에만 준다. */}
+          <div className="relative hidden lg:flex items-center gap-0.5 xl:gap-1">
+            {/* ✨ [2026-09-30] 선택 알약을 GPU 합성(transform)만으로 움직인다 — 총회·OJ·관리처럼 새 페이지를 그리는 동안
+                메인 스레드가 바빠도 끊기지 않게. 폭 변화도 transform으로 하려고 알약을 [왼쪽 원 | 가운데 막대 | 오른쪽 원]
+                세 조각으로 나눠, 같은 시간·같은 곡선으로 옮긴다(가운데는 scaleX로 늘이고 줄임). */}
+            {indicator && (
+              <span
+                aria-hidden
+                className={`nav-pill pointer-events-none absolute left-0 top-0 ${indicatorReady ? "is-ready" : ""}`}
+                style={{ height: indicator.h, opacity: indicator.visible ? 1 : 0 }}
+              >
+                {/* 아래층: 테두리용 회색 조각(0.5px씩 크게) → 위층: 흰 조각. 겹치는 안쪽 선은 흰 조각이 덮어 보이지 않는다 */}
+                {(["edge", "fill"] as const).map((layer) => {
+                  const g = layer === "edge" ? 0.5 : 0; // 테두리 두께
+                  const d = indicator.h + g * 2;
+                  const y = -1 - g;
+                  return [
+                    <span key={`${layer}-l`} className={`nav-pill-cap nav-pill-${layer}`} style={{ width: d, height: d, transform: `translate3d(${indicator.x - g}px,${y}px,0)` }} />,
+                    <span key={`${layer}-r`} className={`nav-pill-cap nav-pill-${layer}`} style={{ width: d, height: d, transform: `translate3d(${indicator.x + indicator.w - indicator.h - g}px,${y}px,0)` }} />,
+                    <span
+                      key={`${layer}-m`}
+                      className={`nav-pill-mid nav-pill-${layer}`}
+                      style={{
+                        height: d,
+                        transform: `translate3d(${indicator.x + indicator.h / 2}px,${y}px,0) scaleX(${Math.max(indicator.w - indicator.h, 0.5) / 100})`,
+                      }}
+                    />,
+                  ];
+                })}
+              </span>
+            )}
             {visibleLinks.map((link) => {
-              const isActive = activeTab === link.id; 
+              const isActive = activeTab === link.id;
               return (
                 <button
                   key={link.id}
+                  ref={(el) => { menuItemRefs.current[link.id] = el; }}
                   onClick={() => handleNavigate(link.id)}
-                  className={`relative py-1 lg:py-2 font-bold transition-all text-[14px] lg:text-[15px] whitespace-nowrap group ${
-                    isActive ? "text-indigo-600" : "text-slate-500 hover:text-indigo-600"
+                  aria-current={isActive ? "page" : undefined}
+                  className={`relative px-3 xl:px-4 h-8 xl:h-9 rounded-full font-medium tracking-[-0.01em] text-[12px] xl:text-[14px] whitespace-nowrap transition-colors duration-300 ${
+                    isActive ? "text-[#1D1D1F]" : "text-[#1D1D1F]/60 hover:text-[#1D1D1F]"
                   }`}
                 >
-                  {link.name}
-                  {isActive && (
-                    <motion.div
-                      layoutId="activeUnderline"
-                      className="absolute -bottom-1 left-0 right-0 h-0.5 bg-indigo-600 rounded-full"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                    />
-                  )}
-                  {!isActive && (
-                    <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-indigo-600/20 rounded-full scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left" />
-                  )}
+                  <motion.span
+                    className="relative z-[1] inline-block"
+                    whileTap={{ scale: 0.94 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                  >
+                    {link.name}
+                  </motion.span>
                 </button>
               );
             })}
@@ -204,61 +367,112 @@ export const Navbar = ({
           <div className="flex items-center gap-3 shrink-0">
             <div className="hidden sm:flex items-center gap-3">
               {!isLoggedIn ? (
-                <>
-                  <Button 
-                    variant="ghost" 
-                    className="font-bold text-slate-600 hover:text-indigo-600 text-sm lg:text-base" 
+                // ✨ [2026-09-29] 회원가입은 글자만, 로그인은 파란 알약
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
                     onClick={() => handleNavigate("signup")}
+                    className="h-10 px-3 text-sm font-medium tracking-[-0.01em] text-[#1D1D1F]/70 hover:text-[#1D1D1F] transition-colors"
                   >
                     회원가입
-                  </Button>
-                  <Button 
-                    className="bg-indigo-600 text-white font-bold px-6 py-4 lg:px-8 lg:py-5 rounded-xl hover:bg-indigo-700 shadow-lg transition-all active:scale-95 text-sm lg:text-base" 
+                  </button>
+                  <motion.button
+                    type="button"
                     onClick={() => handleNavigate("login")}
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.96 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className="relative glass-lens-blue h-10 px-5 rounded-full text-sm font-semibold tracking-[-0.01em]"
                   >
-                    로그인
-                  </Button>
-                </>
+                    <span className="relative z-[1]">로그인</span>
+                  </motion.button>
+                </div>
               ) : (
-                <div className="flex items-center gap-3">
-                  <div
-                    className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-all cursor-pointer group"
+                // ✨ [2026-09-29] 리퀴드 글라스 프로필 — 메뉴의 유리 알약과 같은 재질. 프로필은 떠 있는 알약(사진+이름),
+                // 로그아웃은 옆의 동그란 유리 버튼. 마우스를 올리면 살짝 떠오르고, 누르면 살짝 눌린다.
+                <div className="flex items-center gap-2">
+                  <motion.button
+                    type="button"
                     onClick={() => handleNavigate("profile")}
+                    aria-label="내 프로필"
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.97 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className={`relative glass-lens flex items-center gap-2 h-10 pl-1 pr-3.5 rounded-full ${
+                      currentPage === "profile" ? "ring-2 ring-[#0071E3]/25" : ""
+                    }`}
                   >
-                    <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-xl overflow-hidden border-2 border-white shadow-sm group-hover:scale-105 transition-transform">
+                    <span className="relative z-[1] w-8 h-8 rounded-full overflow-hidden ring-2 ring-white shadow-[0_1px_3px_rgb(0_0_0/0.15)] bg-[#F2F2F7] shrink-0">
                       {user?.avatarUrl || user?.profileImage ? (
                         <img
                           src={user.avatarUrl || user.profileImage}
-                          alt={user.name}
+                          alt=""
                           className="w-full h-full object-cover"
                           onError={(e: any) => {
                             e.target.src = "https://cdn.discordapp.com/embed/avatars/0.png";
                           }}
                         />
                       ) : (
-                        <div className="w-full h-full bg-indigo-100 flex items-center justify-center text-indigo-500 font-bold text-xs">
+                        <span className="w-full h-full flex items-center justify-center text-[#0071E3] font-semibold text-xs">
                           {user?.name?.[0] || "U"}
-                        </div>
+                        </span>
                       )}
-                    </div>
-                    <span className="text-xs lg:text-sm font-black text-slate-700">
-                      {user?.name || "사용자"} 님
                     </span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    className="font-bold text-slate-400 hover:text-red-500 flex items-center gap-2 text-xs lg:text-sm"
-                    onClick={handleLogoutClick}
+                    <span className="relative z-[1] text-[13px] lg:text-sm font-semibold tracking-[-0.01em] text-[#1D1D1F] max-w-[9rem] truncate">
+                      {user?.name || "사용자"}
+                    </span>
+                    <ChevronRight size={14} className="relative z-[1] -ml-0.5 text-[#1D1D1F]/35 shrink-0" />
+                  </motion.button>
+                  {/* ✨ [2026-10-01] 웹 인쇄 — 로그아웃 바로 왼쪽, 같은 크기 */}
+                  <motion.button
+                    type="button"
+                    onClick={() => { navigate("/print"); window.scrollTo({ top: 0, left: 0, behavior: "instant" }); }}
+                    aria-label="프린터"
+                    title="프린터로 인쇄"
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.94 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className={`relative glass-lens w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-200 ${
+                      location.pathname === "/print" ? "text-[#0071E3]" : "text-[#1D1D1F]/55 hover:text-[#0071E3]"
+                    }`}
                   >
-                    <LogOut size={14} className="lg:w-4 lg:h-4" /> 로그아웃
-                  </Button>
+                    <Printer size={16} className="relative z-[1]" />
+                  </motion.button>
+                  <motion.button
+                    type="button"
+                    onClick={handleLogoutClick}
+                    aria-label="로그아웃"
+                    title="로그아웃"
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.94 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    className="relative glass-lens w-10 h-10 rounded-full flex items-center justify-center text-[#1D1D1F]/55 hover:text-[#FF3B30] transition-colors duration-200"
+                  >
+                    <LogOut size={16} className="relative z-[1]" />
+                  </motion.button>
                 </div>
               )}
             </div>
             
+            {/* ✨ [2026-10-01] 휴대폰 — 메뉴 버튼 바로 왼쪽에 동그란 프린터 버튼 (데스크탑 버튼이 숨는 폭에서만) */}
+            {isLoggedIn && (
+              <button
+                type="button"
+                aria-label="프린터"
+                onClick={() => { setIsMobileMenuOpen(false); navigate("/print"); window.scrollTo({ top: 0, left: 0, behavior: "instant" }); }}
+                className={`sm:hidden relative glass-lens w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform ${
+                  location.pathname === "/print" ? "text-[#0071E3]" : "text-[#1D1D1F]/60"
+                }`}
+              >
+                <Printer size={17} className="relative z-[1]" />
+              </button>
+            )}
             {/* 모바일 메뉴 햄버거 버튼 */}
-            <button 
-              className="lg:hidden p-2 text-slate-600" 
+            <button
+              type="button"
+              aria-label={isMobileMenuOpen ? "메뉴 닫기" : "메뉴 열기"}
+              aria-expanded={isMobileMenuOpen}
+              className="lg:hidden w-10 h-10 inline-flex items-center justify-center rounded-full bg-slate-100/80 text-slate-700 hover:bg-slate-200 transition-colors"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
               {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
@@ -274,7 +488,7 @@ export const Navbar = ({
               initial={{ opacity: 0 }} 
               animate={{ opacity: 1 }} 
               exit={{ opacity: 0 }} 
-              className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-[105] lg:hidden" 
+              className="fixed inset-0 bg-slate-950/25 backdrop-blur-sm z-[105] lg:hidden"
               onClick={() => setIsMobileMenuOpen(false)} 
             />
             
@@ -283,7 +497,10 @@ export const Navbar = ({
               animate={{ x: 0 }} 
               exit={{ x: "100%" }} 
               transition={{ type: "spring", damping: 30, stiffness: 300 }} 
-              className="fixed top-0 right-0 bottom-0 w-[75%] max-w-[280px] bg-white z-[110] lg:hidden flex flex-col p-6 pt-16 gap-2 shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-label="모바일 메뉴"
+              className="liquid-glass fixed top-2 right-2 bottom-2 w-[86%] max-w-[340px] z-[110] lg:hidden flex flex-col p-5 pt-14 gap-1.5 rounded-[28px] shadow-[0_12px_40px_rgb(0_0_0/0.08)]"
             >
               {visibleLinks.map((link) => {
                 const isActive = activeTab === link.id;
@@ -291,8 +508,9 @@ export const Navbar = ({
                   <button 
                     key={link.id} 
                     onClick={() => handleNavigate(link.id)} 
-                    className={`text-left py-2.5 px-4 text-[15px] font-bold rounded-xl transition-all ${
-                      isActive ? "bg-indigo-50 text-indigo-600" : "text-slate-700"
+                    aria-current={isActive ? "page" : undefined}
+                    className={`relative text-left py-3 px-4 text-[15px] font-medium tracking-[-0.01em] rounded-2xl transition-colors duration-300 ${
+                      isActive ? "glass-lens text-[#1D1D1F] font-semibold" : "text-[#1D1D1F]/65 hover:text-[#1D1D1F] hover:bg-white/50"
                     }`}
                   >
                     {link.name}
@@ -303,45 +521,57 @@ export const Navbar = ({
               <div className="mt-auto border-t pt-4 space-y-2.5">
                 {!isLoggedIn ? (
                   <>
-                    <Button 
-                      className="w-full py-4 bg-slate-50 text-slate-600 rounded-xl font-bold text-sm" 
+                    <button
+                      type="button"
+                      className="relative glass-lens w-full py-3.5 rounded-2xl font-semibold text-[15px] text-[#1D1D1F] active:scale-[0.98] transition-transform"
                       onClick={() => handleNavigate("signup")}
                     >
-                      회원가입
-                    </Button>
-                    <Button 
-                      className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-sm" 
+                      <span className="relative z-[1]">회원가입</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="relative glass-lens-blue w-full py-3.5 rounded-2xl font-semibold text-[15px] active:scale-[0.98] transition-transform"
                       onClick={() => handleNavigate("login")}
                     >
-                      로그인
-                    </Button>
+                      <span className="relative z-[1]">로그인</span>
+                    </button>
                   </>
                 ) : (
                   <div className="space-y-2.5">
-                    <div
-                      className="px-3 py-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group cursor-pointer"
+                    <button
+                      type="button"
+                      className="relative glass-lens w-full px-3 py-3 rounded-2xl flex items-center justify-between active:scale-[0.98] transition-transform"
                       onClick={() => handleNavigate("profile")}
                     >
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg overflow-hidden border-2 border-white shadow-sm">
+                      <span className="relative z-[1] flex items-center gap-3 min-w-0">
+                        <span className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-white shadow-[0_1px_3px_rgb(0_0_0/0.15)] shrink-0">
                           <img
                             src={user?.avatarUrl || user?.profileImage || "https://cdn.discordapp.com/embed/avatars/0.png"}
-                            alt="profile"
+                            alt=""
                             className="w-full h-full object-cover"
                           />
-                        </div>
-                        <span className="font-bold text-slate-700 text-[13px]">
-                          {user?.name || "사용자"} 님
                         </span>
-                      </div>
-                      <ChevronRight size={16} className="text-slate-300" />
-                    </div>
-                    <Button 
-                      className="w-full py-3.5 bg-red-50 text-red-500 rounded-xl font-bold flex items-center justify-center gap-2 text-sm" 
+                        <span className="min-w-0 text-left">
+                          <span className="block font-semibold text-[#1D1D1F] text-[15px] tracking-[-0.01em] truncate">{user?.name || "사용자"}</span>
+                          <span className="block text-[12px] text-[#6E6E73]">내 프로필 보기</span>
+                        </span>
+                      </span>
+                      <ChevronRight size={16} className="relative z-[1] text-[#1D1D1F]/30 shrink-0" />
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full py-3.5 rounded-2xl bg-[#0071E3]/[0.08] text-[#0071E3] font-semibold flex items-center justify-center gap-2 text-[15px] active:scale-[0.98] transition-transform"
+                      onClick={() => { setIsMobileMenuOpen(false); navigate("/print"); window.scrollTo({ top: 0, left: 0, behavior: "instant" }); }}
+                    >
+                      <Printer size={16} /> 프린터로 인쇄
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full py-3.5 rounded-2xl bg-[#FF3B30]/[0.08] text-[#FF3B30] font-semibold flex items-center justify-center gap-2 text-[15px] active:scale-[0.98] transition-transform"
                       onClick={handleLogoutClick}
                     >
                       <LogOut size={16} /> 로그아웃
-                    </Button>
+                    </button>
                   </div>
                 )}
               </div>

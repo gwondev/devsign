@@ -1,25 +1,106 @@
 import { motion } from "framer-motion";
-import { Phone, MapPin, Mail, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Phone, MapPin, Mail, ChevronRight, Pencil, Check } from "lucide-react";
+import { api } from "../../api/axios";
 
-// ✨ 여기에 디스코드 서버 아이콘 링크를 넣어주세요!
-const DISCORD_SERVER_ICON = "https://cdn.discordapp.com/icons/462157565229268993/70266f261f01165295208967e73f0555.webp?size=160&quality=lossless";
+// ✨ [수정] 서버 아이콘을 하드코딩하면 디스코드에서 아이콘을 바꿀 때마다 깨지므로,
+// 최초 렌더링 시의 임시값으로만 쓰고 실제로는 /api/guild/icon에서 실시간으로 받아온다.
+const FALLBACK_DISCORD_SERVER_ICON = "https://cdn.discordapp.com/icons/462157565229268993/70266f261f01165295208967e73f0555.webp?size=160&quality=lossless";
+
+// ✨ 학번 8자리 -> 2자리 연도 코드로 축약 (formatStudentId 공통 규칙)
+const formatStudentId = (id?: string) => {
+  if (!id) return "";
+  const strId = String(id).trim();
+  if (strId.length === 8) return strId.substring(2, 4);
+  return strId;
+};
+
+const PHONE_KEYS = { 회장: "presidentPhone", 부회장: "vicePresidentPhone", 총무: "treasurerPhone" } as const;
 
 interface FooterProps {
   onNavigate: (page: string) => void;
+  isAdmin?: boolean;
 }
 
-export const Footer = ({ onNavigate }: FooterProps) => {
+export const Footer = ({ onNavigate, isAdmin }: FooterProps) => {
   const currentYear = new Date().getFullYear();
+  const [guildIconUrl, setGuildIconUrl] = useState<string>(FALLBACK_DISCORD_SERVER_ICON);
 
-  // 운영진 연락처 데이터
-  const admins = [
-    { role: "회장", year: "22", name: "김형민", phone: "010-9171-8162" },
-    { role: "부회장", year: "22", name: "이수혁", phone: "010-6545-1948" },
-    { role: "총무", year: "23", name: "이수빈", phone: "010-8639-5557" },
-  ];
+  // ✨ [신규] 디스코드 서버 아이콘을 실시간으로 조회 (아이콘이 바뀌어도 항상 최신 상태 유지)
+  useEffect(() => {
+    const fetchGuildIcon = async () => {
+      try {
+        const res = await api.get("/guild/icon");
+        if (res.data?.iconUrl) {
+          setGuildIconUrl(res.data.iconUrl);
+        }
+      } catch (e) {
+        // 조회 실패 시 기존 값(폴백)을 그대로 사용
+      }
+    };
+    fetchGuildIcon();
+  }, []);
+
+  // ✨ [신규] 운영진 연락처 — 이름/학번은 회원 정보(이름에 "(회장)"처럼 직책이 붙는 관례)에서
+  // 실시간으로 따오고, 전화번호만 관리자 설정(Hero 설정과 같은 저장소)에서 받아온다.
+  const [officers, setOfficers] = useState<{ role: string; name: string; studentId: string }[]>([]);
+  const [settings, setSettings] = useState<any>(null);
+  const [isEditingPhones, setIsEditingPhones] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState<Record<string, string>>({});
+
+  const fetchContactData = async () => {
+    try {
+      const [officersRes, settingsRes] = await Promise.all([
+        api.get("/members/officers"),
+        api.get(`/admin/settings?_t=${new Date().getTime()}`),
+      ]);
+      setOfficers(officersRes.data || []);
+      setSettings(settingsRes.data || null);
+    } catch (e) {
+      console.error("연락처 정보를 불러오는 데 실패했습니다.", e);
+    }
+  };
+
+  useEffect(() => { fetchContactData(); }, []);
+
+  const admins = officers.map((o) => ({
+    role: o.role,
+    year: formatStudentId(o.studentId),
+    name: o.name,
+    phone: settings?.[PHONE_KEYS[o.role as keyof typeof PHONE_KEYS]] || "",
+  }));
+
+  const startEditingPhones = () => {
+    setPhoneDraft({
+      presidentPhone: settings?.presidentPhone || "",
+      vicePresidentPhone: settings?.vicePresidentPhone || "",
+      treasurerPhone: settings?.treasurerPhone || "",
+    });
+    setIsEditingPhones(true);
+  };
+
+  const savePhones = async () => {
+    try {
+      const response = await api.post("/admin/settings", {
+        recruitmentText: settings?.recruitmentText,
+        applyLink: settings?.applyLink,
+        applyButtonText: settings?.applyButtonText,
+        ...phoneDraft,
+      });
+      if (response.data?.status === "success") {
+        setIsEditingPhones(false);
+        await fetchContactData();
+      } else {
+        alert(`저장 실패: ${response.data?.message || "알 수 없는 오류"}`);
+      }
+    } catch (e) {
+      console.error("연락처 저장 실패", e);
+      alert("서버 통신 오류로 저장하지 못했습니다.");
+    }
+  };
 
   return (
-    <footer className="bg-slate-950 text-slate-400 py-10 md:py-20 px-5 md:px-6 border-t border-slate-900">
+    <footer className="relative z-[1] bg-[#f5f5f7]/80 text-slate-500 py-10 md:py-16 px-5 md:px-6 border-t border-white/70 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto">
         {/* ✨ 핵심 변경: 모바일에서 grid-cols-2 적용하여 2열로 나란히 배치 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 mb-10 md:mb-16">
@@ -32,16 +113,21 @@ export const Footer = ({ onNavigate }: FooterProps) => {
               onClick={() => onNavigate("home")}
             >
               <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl overflow-hidden shadow-lg shadow-indigo-500/20 bg-white flex items-center justify-center shrink-0">
-                <img 
-                  src={DISCORD_SERVER_ICON} 
-                  alt="DEVSIGN" 
+                <img
+                  src={guildIconUrl}
+                  alt="DEVSIGN"
                   className="w-full h-full object-cover"
                   onError={(e: any) => {
                     e.target.style.display = 'none'; // 이미지 로드 실패 시 숨김 처리
                   }}
+                  onLoad={(e: any) => {
+                    // ✨ 이전 실패(예: 만료된 폴백 URL)로 onError가 display:none을 남긴 상태에서,
+                    // 이후 진짜 아이콘이 성공적으로 로드돼도 계속 숨겨져 있던 버그 수정
+                    e.target.style.display = '';
+                  }}
                 />
               </div>
-              <span className="font-bold text-lg md:text-2xl text-white tracking-tight truncate">DEVSIGN</span>
+              <span className="font-[800] text-lg md:text-2xl text-slate-900 tracking-[-0.035em] truncate">DEVSIGN</span>
             </div>
             {/* ✨ 공간이 좁아지므로 모바일 글씨 크기를 text-[11px]로 더 작게 조정 */}
             <p className="text-[11px] md:text-sm leading-relaxed font-medium">
@@ -53,7 +139,7 @@ export const Footer = ({ onNavigate }: FooterProps) => {
 
           {/* 2. 빠른 링크 영역 */}
           <div className="col-span-1">
-            <h4 className="text-[13px] md:text-base text-white font-bold mb-3 md:mb-6 flex items-center gap-1.5 md:gap-2">
+            <h4 className="text-[13px] md:text-base text-slate-900 font-bold mb-3 md:mb-6 flex items-center gap-1.5 md:gap-2">
               <ChevronRight className="w-3.5 h-3.5 md:w-4 md:h-4 text-indigo-500 shrink-0" /> 바로가기
             </h4>
             <ul className="space-y-2 md:space-y-4 text-[11px] md:text-sm font-medium">
@@ -72,22 +158,46 @@ export const Footer = ({ onNavigate }: FooterProps) => {
 
           {/* 3. 운영진 연락처 영역 (소셜 아이콘 대체) */}
           <div className="col-span-1">
-            <h4 className="text-[13px] md:text-base text-white font-bold mb-3 md:mb-6 flex items-center gap-1.5 md:gap-2">
+            <h4 className="text-[13px] md:text-base text-slate-900 font-bold mb-3 md:mb-6 flex items-center gap-1.5 md:gap-2">
               <Phone className="w-3.5 h-3.5 md:w-4 md:h-4 text-indigo-500 shrink-0" /> 연락처
+              {isAdmin && (
+                <button
+                  onClick={() => (isEditingPhones ? savePhones() : startEditingPhones())}
+                  className="ml-auto text-slate-500 hover:text-indigo-400 transition-colors"
+                  title={isEditingPhones ? "저장" : "전화번호 수정"}
+                >
+                  {isEditingPhones ? <Check className="w-3.5 h-3.5 md:w-4 md:h-4" /> : <Pencil className="w-3 h-3 md:w-3.5 md:h-3.5" />}
+                </button>
+              )}
             </h4>
             <ul className="space-y-3 md:space-y-4">
               {admins.map((admin) => (
-                <li key={admin.phone} className="group">
-                  <a href={`tel:${admin.phone}`} className="flex flex-col gap-0.5 md:gap-1">
-                    {/* ✨ 좁은 공간을 위해 이름과 직책을 분리하여 줄바꿈 허용 */}
-                    <div className="flex flex-col lg:flex-row lg:items-center gap-0.5 lg:gap-2 text-[11px] md:text-sm">
-                      <span className="text-indigo-400 font-bold">{admin.role}</span>
-                      <span className="text-slate-200 font-bold truncate">{admin.year} {admin.name}</span>
+                <li key={admin.role} className="group">
+                  {isEditingPhones ? (
+                    <div className="flex flex-col gap-0.5 md:gap-1">
+                      <div className="flex flex-col lg:flex-row lg:items-center gap-0.5 lg:gap-2 text-[11px] md:text-sm">
+                        <span className="text-indigo-400 font-bold">{admin.role}</span>
+                        <span className="text-slate-700 font-bold truncate">{admin.year} {admin.name}</span>
+                      </div>
+                      <input
+                        value={phoneDraft[PHONE_KEYS[admin.role as keyof typeof PHONE_KEYS]] || ""}
+                        onChange={(e) => setPhoneDraft((p) => ({ ...p, [PHONE_KEYS[admin.role as keyof typeof PHONE_KEYS]]: e.target.value }))}
+                        placeholder="010-0000-0000"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] md:text-xs font-medium text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
                     </div>
-                    <span className="text-[10px] md:text-xs font-medium group-hover:text-indigo-400 transition-colors">
-                      {admin.phone}
-                    </span>
-                  </a>
+                  ) : (
+                    <a href={`tel:${admin.phone}`} className="flex flex-col gap-0.5 md:gap-1">
+                      {/* ✨ 좁은 공간을 위해 이름과 직책을 분리하여 줄바꿈 허용 */}
+                      <div className="flex flex-col lg:flex-row lg:items-center gap-0.5 lg:gap-2 text-[11px] md:text-sm">
+                        <span className="text-indigo-400 font-bold">{admin.role}</span>
+                        <span className="text-slate-700 font-bold truncate">{admin.year} {admin.name}</span>
+                      </div>
+                      <span className="text-[10px] md:text-xs font-medium group-hover:text-indigo-400 transition-colors">
+                        {admin.phone}
+                      </span>
+                    </a>
+                  )}
                 </li>
               ))}
             </ul>
@@ -95,12 +205,12 @@ export const Footer = ({ onNavigate }: FooterProps) => {
 
           {/* 4. 오시는 길 영역 */}
           <div className="col-span-1">
-            <h4 className="text-[13px] md:text-base text-white font-bold mb-3 md:mb-6 flex items-center gap-1.5 md:gap-2">
+            <h4 className="text-[13px] md:text-base text-slate-900 font-bold mb-3 md:mb-6 flex items-center gap-1.5 md:gap-2">
               <MapPin className="w-3.5 h-3.5 md:w-4 md:h-4 text-indigo-500 shrink-0" /> 오시는 길
             </h4>
             <div className="space-y-2 md:space-y-4 text-[11px] md:text-sm font-medium leading-relaxed">
               <div className="flex gap-2 md:gap-3">
-                <span className="text-slate-200">
+                <span className="text-slate-700">
                   광주 동구 필문대로 309<br />
                   IT융합대학 4층 4122
                 </span>
@@ -110,7 +220,7 @@ export const Footer = ({ onNavigate }: FooterProps) => {
         </div>
 
         {/* 하단 저작권 영역 */}
-        <div className="pt-6 md:pt-10 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-4 md:gap-6 text-center md:text-left">
+        <div className="pt-6 md:pt-8 border-t border-black/[0.06] flex flex-col md:flex-row justify-between items-center gap-4 md:gap-6 text-center md:text-left">
           <p className="text-[11px] md:text-[13px] font-medium">
             © {currentYear} <span className="text-indigo-500 font-bold tracking-tight">DEVSIGN</span>. All rights reserved.
           </p>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, ClipboardList, ShieldCheck, RefreshCcw,
@@ -7,10 +7,17 @@ import {
   Download, Save, X, UserMinus, UserCheck, ChevronDown,
   Trash2, ShieldAlert, Lock, History, RotateCcw, BookOpen, ShieldBan, LogIn,
   FileText, Heart, PlusCircle, UserPlus, Globe, Calendar, Clock, AlertTriangle,
-  Phone, Hash, BadgeCheck, Info, Search, Edit, FilePlus, FileX, MessageSquare, LogOut, Activity
+  Phone, Hash, BadgeCheck, Info, Search, Edit, FilePlus, FileX, MessageSquare, LogOut, Activity,
+  UserX, CheckCircle2, Loader2, Check, Upload, FileSpreadsheet, ArrowLeftRight
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { api } from "../../api/axios";
+import { FeeTab } from "./tabs/FeeTab";
+import { ActivityTab } from "./tabs/ActivityTab";
+import { AssemblyNoticeTab } from "./tabs/AssemblyNoticeTab";
+import { AchievementsTab } from "./tabs/AchievementsTab";
+import { FileDropZone } from "../../components/ui/FileDropZone";
+import { MiniCalendar } from "../../components/ui/MiniCalendar";
 
 // --- 1. 타입 정의 ---
 type SortCriteria = "ID_DESC" | "ID_ASC" | "NAME_ASC";
@@ -21,7 +28,7 @@ type LogType = "LOGIN" | "LOGOUT" | "SIGNUP"
   | "COMMENT_CREATE" | "COMMENT_DELETE" | "LIKE"
   | "EVENT_CREATE" | "EVENT_UPDATE" | "EVENT_DELETE"
   | "NOTICE_CREATE" | "NOTICE_UPDATE" | "NOTICE_DELETE"
-  | "ACCOUNT_SUSPEND" | "ACCOUNT_UNSUSPEND" | "ACCOUNT_RESTORE" | "ACCOUNT_DELETE" | "ACCOUNT_PERMANENT_DELETE";
+  | "ACCOUNT_SUSPEND" | "ACCOUNT_UNSUSPEND" | "ACCOUNT_RESTORE" | "ACCOUNT_DELETE" | "ACCOUNT_PERMANENT_DELETE" | "ACCOUNT_DISCORD_UPDATE";
 
 interface Member {
   id: number;
@@ -48,18 +55,65 @@ interface AccessLog {
   timestamp: string;
 }
 
+interface DiscordCheckItem {
+  id: number;
+  loginId: string;
+  name: string;
+  studentId: string;
+  discordTag: string;
+  userStatus: string;
+  role: string;
+  inGuild: boolean;
+  departed: boolean; // 2026-09-08 추가 — "나간 인원"으로 표시됨(계정 삭제 아님, 커뮤니티 노출만 제외)
+}
+
+// ✨ [2026-09-08 신규] 디스코드에는 있지만(재학생/휴학생만 대상) 웹사이트에는 아직 가입하지 않은 사람
+interface UnregisteredGuildMember {
+  nickname: string;
+  discordTag: string;
+}
+
+// ✨ [2026-09-08 신규] "명단 대조" — 엑셀 부원 명부와 실제 디스코드 서버를 대조한 결과
+interface RosterCheckResult {
+  discordNotInFile: Record<string, { nickname: string; discordTag: string }[]>;
+  fileNotInDiscord: Record<string, { name: string; studentId: string; expectedNickname: string }[]>;
+  idChanged: { name: string; studentId: string; fileId: string; currentDiscordId: string; nickname: string }[];
+  statusMismatch: { name: string; studentId: string; fileStatus: string; expectedStatus: string; currentDiscordStatus: string }[];
+  unmatchedRows: { name: string; studentId: string; reason: string }[];
+  totalDiscordMembers: number;
+  totalFileRows: number;
+}
+
 export const AdminPage = () => {
   // --- 2. 상태 관리 ---
   const [members, setMembers] = useState<Member[]>([]);
   const [accessLogs, setAccessLogs] = useState<AccessLog[]>([]);
   const [deletedMembers, setDeletedMembers] = useState<Member[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"members" | "access" | "logs">("members");
+  const [activeTab, setActiveTab] = useState<"members" | "access" | "logs" | "discord" | "roster" | "fee" | "activity" | "notice" | "achievements">("members");
   const [sortBy, setSortBy] = useState<SortCriteria>("ID_DESC");
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // ✨ [신규] 디스코드 잔류 여부 확인 탭 상태
+  const [discordCheckItems, setDiscordCheckItems] = useState<DiscordCheckItem[] | null>(null);
+  const [isDiscordCheckLoading, setIsDiscordCheckLoading] = useState(false);
+  const [discordCheckError, setDiscordCheckError] = useState<string | null>(null);
+  // ✨ [2026-09-08 신규] 디스코드엔 있지만 웹사이트엔 아직 가입 안 한 사람 (재학생 -> 휴학생 순서)
+  const [unregisteredGuildMembers, setUnregisteredGuildMembers] = useState<Record<string, UnregisteredGuildMember[]> | null>(null);
+
+  // ✨ [2026-09-08 신규] "명단 대조" 탭 상태
+  const [rosterFile, setRosterFile] = useState<File | null>(null);
+  const rosterInputRef = useRef<HTMLInputElement>(null);
+  const [rosterCheckResult, setRosterCheckResult] = useState<RosterCheckResult | null>(null);
+  const [isRosterChecking, setIsRosterChecking] = useState(false);
+  const [rosterCheckError, setRosterCheckError] = useState<string | null>(null);
+
   const [selectedDate, setSelectedDate] = useState<string>("ALL");
   const [selectedTimeRange, setSelectedTimeRange] = useState<string>("ALL");
+
+  // ✨ [신규] 통합 로그 페이지네이션
+  const [logsPage, setLogsPage] = useState(0);
+  const LOGS_PER_PAGE = 50;
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -67,6 +121,10 @@ export const AdminPage = () => {
   const [isHardDelete, setIsHardDelete] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<Member | null>(null);
   const [adminPassword, setAdminPassword] = useState("");
+
+  // ✨ [신규] 관리자가 회원의 디스코드 태그를 직접 수정
+  const [editingDiscordId, setEditingDiscordId] = useState<number | null>(null);
+  const [discordTagDraft, setDiscordTagDraft] = useState("");
 
   // --- 3. 데이터 로딩 ---
   useEffect(() => {
@@ -86,6 +144,48 @@ export const AdminPage = () => {
     }
   };
 
+  // ✨ [신규] 디스코드 잔류 여부 확인 (탭을 열 때 / 새로고침 버튼으로 조회)
+  const fetchDiscordCheck = async () => {
+    setIsDiscordCheckLoading(true);
+    setDiscordCheckError(null);
+    try {
+      const res = await api.get("/admin/discord-check");
+      setDiscordCheckItems(res.data.members);
+      setUnregisteredGuildMembers(res.data.unregistered);
+    } catch (e: any) {
+      setDiscordCheckError(e.response?.data?.message || "디스코드 봇 서버와 통신하는 중 오류가 발생했습니다.");
+    } finally {
+      setIsDiscordCheckLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "discord" && discordCheckItems === null && !isDiscordCheckLoading) {
+      fetchDiscordCheck();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // ✨ [2026-09-08 신규] 업로드된 엑셀 명부를 서버로 보내 디스코드 서버와 대조
+  const handleRosterCheck = async () => {
+    if (!rosterFile) {
+      alert("엑셀 파일을 먼저 선택해주세요.");
+      return;
+    }
+    setIsRosterChecking(true);
+    setRosterCheckError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", rosterFile);
+      const res = await api.post("/admin/roster-check", formData);
+      setRosterCheckResult(res.data);
+    } catch (e: any) {
+      setRosterCheckError(e.response?.data?.message || "명단 대조 중 오류가 발생했습니다.");
+    } finally {
+      setIsRosterChecking(false);
+    }
+  };
+
   // --- 4. 비즈니스 로직 ---
 
   const formatTimestamp = (timestamp: string) => {
@@ -99,11 +199,11 @@ export const AdminPage = () => {
     return timePart ? timePart.split('.')[0] : timestamp;
   };
 
-  const groupLogsByDate = (logs: AccessLog[]) => {
-    const groups: { [key: string]: AccessLog[] } = {};
+  // ✨ [수정] 날짜/시간대 필터링만 담당 (그룹핑은 별도 함수로 분리 — 페이지네이션 적용을 위해)
+  const filteredLogsFlat = useMemo(() => {
     let filtered = selectedDate === "ALL"
-      ? logs
-      : logs.filter(log => log.timestamp.includes(selectedDate));
+      ? accessLogs
+      : accessLogs.filter(log => log.timestamp.includes(selectedDate));
 
     if (selectedTimeRange !== "ALL") {
       filtered = filtered.filter(log => {
@@ -117,7 +217,25 @@ export const AdminPage = () => {
       });
     }
 
-    filtered.forEach(log => {
+    return [...filtered].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }, [accessLogs, selectedDate, selectedTimeRange]);
+
+  // ✨ [신규] 통합 로그가 너무 많아지는 문제 해결을 위한 페이지네이션
+  const totalLogsPages = Math.max(1, Math.ceil(filteredLogsFlat.length / LOGS_PER_PAGE));
+
+  const pagedLogs = useMemo(() => {
+    const start = logsPage * LOGS_PER_PAGE;
+    return filteredLogsFlat.slice(start, start + LOGS_PER_PAGE);
+  }, [filteredLogsFlat, logsPage]);
+
+  // 필터가 바뀌면 페이지를 처음으로 되돌림
+  useEffect(() => {
+    setLogsPage(0);
+  }, [selectedDate, selectedTimeRange]);
+
+  const groupLogsByDate = (logs: AccessLog[]) => {
+    const groups: { [key: string]: AccessLog[] } = {};
+    logs.forEach(log => {
       const date = log.timestamp.split('T')[0] || log.timestamp.split(' ')[0];
       if (!groups[date]) groups[date] = [];
       groups[date].push(log);
@@ -125,9 +243,43 @@ export const AdminPage = () => {
     return groups;
   };
 
-  const getAvailableDates = () => {
-    const dates = accessLogs.map(log => log.timestamp.split('T')[0] || log.timestamp.split(' ')[0]);
-    return Array.from(new Set(dates)).sort((a, b) => b.localeCompare(a));
+  // ✨ [2026-09-30] 날짜 알약은 전체보기 + 오늘/어제/그저께만. 그 외 날짜는 "다른 날짜" 달력으로 바로 이동.
+  const toLocalDateStr = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const recentDateChips = useMemo(() => {
+    const labels = ["오늘", "어제", "그저께"];
+    return labels.map((label, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const value = toLocalDateStr(d);
+      return { label, value, short: value.slice(5).replace("-", ".") };
+    });
+  }, []);
+  // 다른 날짜 달력 팝업 — 버튼을 다시 누르거나 바깥을 누르면 닫힌다
+  const [logCalendarOpen, setLogCalendarOpen] = useState(false);
+  const logCalendarRef = useRef<HTMLDivElement>(null);
+  const logDates = useMemo(
+    () => new Set(accessLogs.map((log) => log.timestamp.split("T")[0] || log.timestamp.split(" ")[0])),
+    [accessLogs]
+  );
+  useEffect(() => {
+    if (!logCalendarOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (logCalendarRef.current && !logCalendarRef.current.contains(e.target as Node)) setLogCalendarOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [logCalendarOpen]);
+  const isCustomDate = selectedDate !== "ALL" && !recentDateChips.some((c) => c.value === selectedDate);
+
+  // ✨ [2026-09-30] 페이지 번호는 5개씩 묶어서 보여준다 (1–5, 6–10 …) + 원하는 페이지로 바로 이동
+  const LOG_PAGE_GROUP = 5;
+  const logPageGroupStart = Math.floor(logsPage / LOG_PAGE_GROUP) * LOG_PAGE_GROUP;
+  const [logPageJump, setLogPageJump] = useState("");
+  const jumpToLogPage = () => {
+    const n = parseInt(logPageJump, 10);
+    if (!Number.isNaN(n)) setLogsPage(Math.min(totalLogsPages, Math.max(1, n)) - 1);
+    setLogPageJump("");
   };
 
   const getLogStyle = (type: LogType) => {
@@ -152,6 +304,7 @@ export const AdminPage = () => {
       case "ACCOUNT_RESTORE": return { icon: <RotateCcw size={12} />, label: "계정 복구", color: "bg-indigo-50 text-indigo-600 border-indigo-100" };
       case "ACCOUNT_DELETE": return { icon: <Trash2 size={12} />, label: "삭제 이동", color: "bg-amber-50 text-amber-600 border-amber-100" };
       case "ACCOUNT_PERMANENT_DELETE": return { icon: <ShieldBan size={12} />, label: "영구 삭제", color: "bg-slate-900 text-white border-slate-900" };
+      case "ACCOUNT_DISCORD_UPDATE": return { icon: <MessageSquare size={12} />, label: "디스코드 수정", color: "bg-indigo-50 text-indigo-600 border-indigo-100" };
       default: return { icon: <Activity size={12} />, label: "기타 활동", color: "bg-slate-50 text-slate-500 border-slate-100" };
     }
   };
@@ -282,6 +435,61 @@ export const AdminPage = () => {
   const isOtherStatus = (value?: string) =>
     !isAttendingStatus(value) && !isLeaveStatus(value) && !isLabStatus(value) && !isFreshmanStatus(value) && !isGraduateStatus(value);
 
+  // ✨ [신규] 디스코드 확인 탭용 필터링 (검색어 + 잔류 여부로 분리)
+  const getFilteredDiscordItems = (items: DiscordCheckItem[]) => {
+    return items.filter(m =>
+      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.studentId.includes(searchQuery) ||
+      (m.discordTag || "").toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  };
+
+  // ✨ [신규] 디스코드 확인 목록에서 삭제 버튼을 눌렀을 때, 전체 부원 명단에서 동일 id를 찾아
+  // 기존 삭제 확인 모달(initiateDelete)을 그대로 재사용한다.
+  const handleDeleteFromDiscordCheck = (item: DiscordCheckItem) => {
+    const fullMember = members.find(m => m.id === item.id);
+    if (fullMember) {
+      initiateDelete(fullMember, false);
+    } else {
+      alert("부원 명단에서 해당 회원 정보를 찾을 수 없습니다. '부원 명단' 탭에서 새로고침 후 다시 시도해주세요.");
+    }
+  };
+
+  // ✨ [2026-09-08 추가] 디스코드에서 나간 것으로 추정되는 회원을 "나간 인원"으로 표시/해제.
+  // 계정 삭제와 달리 DB는 그대로 두고, 커뮤니티 목록에서만 제외됨(가역적).
+  const handleToggleDeparted = async (item: DiscordCheckItem) => {
+    const confirmMessage = item.departed
+      ? `${item.name}님을 "나간 인원" 표시에서 해제할까요?\n다시 커뮤니티에 노출됩니다.`
+      : `${item.name}님을 "나간 인원"으로 표시할까요?\n계정은 삭제되지 않고, 커뮤니티 목록에서만 제외됩니다.`;
+    if (!window.confirm(confirmMessage)) return;
+    try {
+      await api.put(`/admin/members/${item.id}/departed`);
+      setDiscordCheckItems(prev => prev ? prev.map(m => m.id === item.id ? { ...m, departed: !m.departed } : m) : prev);
+    } catch (e) {
+      console.error("나간 인원 처리 실패", e);
+      alert("처리 중 오류가 발생했습니다.");
+    }
+  };
+
+  // ✨ [신규] 관리자가 직접 회원의 디스코드 태그 수정
+  const handleSaveDiscordTag = async (member: Member) => {
+    if (!discordTagDraft.trim()) {
+      alert("디스코드 태그를 입력해주세요.");
+      return;
+    }
+    try {
+      const res = await api.put(`/admin/members/${member.id}/discord-tag`, { discordTag: discordTagDraft.trim() });
+      if (res.data.status === "success") {
+        setEditingDiscordId(null);
+        await fetchAdminData();
+      } else {
+        alert(res.data.message || "수정에 실패했습니다.");
+      }
+    } catch (e) {
+      alert("디스코드 태그 수정 중 오류가 발생했습니다.");
+    }
+  };
+
   const handleDiscordSync = async () => {
     setIsSyncing(true);
     try {
@@ -343,7 +551,31 @@ export const AdminPage = () => {
                       </div>
                     </td>
                     <td className="px-4 md:px-8 py-4 md:py-6 text-slate-500 font-bold tracking-wider text-[11px] md:text-sm">{member.studentId}</td>
-                    <td className="px-4 md:px-8 py-4 md:py-6 text-indigo-600 font-bold text-[11px] md:text-sm truncate">@{member.discordTag}</td>
+                    <td className="px-4 md:px-8 py-4 md:py-6 text-indigo-600 font-bold text-[11px] md:text-sm">
+                      {editingDiscordId === member.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            autoFocus
+                            value={discordTagDraft}
+                            onChange={(e) => setDiscordTagDraft(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleSaveDiscordTag(member)}
+                            className="w-full min-w-0 px-2 py-1.5 bg-slate-50 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-[11px] md:text-sm text-slate-900"
+                          />
+                          <button onClick={() => handleSaveDiscordTag(member)} className="p-1.5 bg-indigo-600 text-white rounded-lg shrink-0"><Check size={12} /></button>
+                          <button onClick={() => setEditingDiscordId(null)} className="p-1.5 bg-slate-100 text-slate-400 rounded-lg shrink-0"><X size={12} /></button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="truncate">@{member.discordTag}</span>
+                          <button
+                            onClick={() => { setEditingDiscordId(member.id); setDiscordTagDraft(member.discordTag || ""); }}
+                            className="text-slate-300 hover:text-indigo-500 shrink-0 transition-colors"
+                          >
+                            <Edit size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 md:px-8 py-4 md:py-6 text-center">
                       <div className="flex justify-center gap-1.5 md:gap-2">
                         <button onClick={() => toggleSuspension(member.id)} className={`p-1.5 md:p-2.5 rounded-lg md:rounded-xl shadow-sm transition-all ${member.suspended ? "bg-indigo-600 text-white" : "bg-white text-red-500 border border-red-100 hover:bg-red-50"}`}>{member.suspended ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}</button>
@@ -361,32 +593,61 @@ export const AdminPage = () => {
   };
 
   return (
-    <div className="pt-24 md:pt-32 pb-16 md:pb-20 px-4 md:px-6 bg-slate-50 min-h-screen font-sans">
+    <div className="relative pt-24 md:pt-28 pb-16 md:pb-20 px-4 md:px-6 min-h-screen font-sans">
+      {/* ✨ [2026-10-01] 리퀴드 글라스 배경 — 유리 카드 뒤로 은은한 색이 비치게 */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute -top-32 -left-24 w-[520px] h-[520px] rounded-full blur-3xl opacity-70" style={{ background: "radial-gradient(circle, rgb(10 132 255 / 0.18), transparent 65%)" }} />
+        <div className="absolute top-1/3 -right-32 w-[560px] h-[560px] rounded-full blur-3xl opacity-70" style={{ background: "radial-gradient(circle, rgb(191 90 242 / 0.14), transparent 65%)" }} />
+        <div className="absolute -bottom-40 left-1/4 w-[520px] h-[520px] rounded-full blur-3xl opacity-60" style={{ background: "radial-gradient(circle, rgb(100 210 255 / 0.16), transparent 65%)" }} />
+      </div>
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8 md:mb-12 flex flex-col md:flex-row md:items-end justify-between gap-4 md:gap-6">
+        <div className="mb-6 md:mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4 md:gap-6">
           <div>
-            <div className="flex items-center gap-2 md:gap-3 mb-2 md:mb-4">
-              <div className="p-2 md:p-3 bg-indigo-600 rounded-xl md:rounded-2xl text-white shadow-lg"><ShieldCheck className="w-5 h-5 md:w-6 md:h-6" /></div>
-              <h1 className="text-xl md:text-3xl font-[900] text-slate-900 tracking-tighter uppercase">관리</h1>
-            </div>
-            <p className="text-slate-500 font-bold tracking-tight text-[11px] md:text-sm">부원 권한 관리 및 실시간 로그 모니터링 시스템</p>
+            <h1 className="text-[34px] md:text-[40px] font-bold text-[#1D1D1F] tracking-[-0.025em] leading-tight">관리</h1>
+            <p className="text-[15px] text-[#6E6E73] mt-1">부원 권한과 로그, 회비·활동·총회 공지를 한곳에서 관리해요.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 bg-white p-1.5 md:p-2 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm w-full md:w-auto justify-end">
+          <div className="flex items-center gap-2">
             <button
               onClick={handleDiscordSync}
               disabled={isSyncing}
-              className="flex items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-3 bg-white text-indigo-600 border border-indigo-100 font-black rounded-lg md:rounded-xl hover:bg-indigo-50 transition-all disabled:opacity-50 text-[10px] md:text-sm h-auto"
+              className="glass-card inline-flex items-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold text-[#1D1D1F] hover:text-[#0071E3] transition-colors disabled:opacity-50"
             >
-              <RefreshCcw size={14} className={isSyncing ? "animate-spin" : ""} /> <span className="whitespace-nowrap">디스코드 동기화</span>
+              <RefreshCcw size={15} className={isSyncing ? "animate-spin" : ""} /> <span className="whitespace-nowrap">디스코드 동기화</span>
             </button>
-            <button onClick={exportToCSV} className="flex items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-3 bg-indigo-600 text-white font-black rounded-lg md:rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 text-[10px] md:text-sm h-auto"><Download size={14} /> CSV</button>
+            <button onClick={exportToCSV} className="inline-flex items-center gap-1.5 h-10 px-4 rounded-full bg-[#0071E3] text-white text-sm font-semibold hover:bg-[#0077ED] transition-colors"><Download size={15} /> CSV</button>
           </div>
         </div>
 
-        <div className="flex gap-2 p-1 bg-slate-200/50 rounded-xl md:rounded-[1.5rem] mb-8 md:mb-10 w-fit">
-          <button onClick={() => { setActiveTab("members"); setSearchQuery(""); }} className={`px-4 md:px-8 py-2 md:py-3 rounded-lg md:rounded-2xl font-bold transition-all text-xs md:text-base ${activeTab === "members" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500"}`}>부원 명단</button>
-          <button onClick={() => { setActiveTab("access"); setSearchQuery(""); }} className={`px-4 md:px-8 py-2 md:py-3 rounded-lg md:rounded-2xl font-bold transition-all text-xs md:text-base ${activeTab === "access" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500"}`}>통합 로그</button>
-          <button onClick={() => { setActiveTab("logs"); setSearchQuery(""); }} className={`px-4 md:px-8 py-2 md:py-3 rounded-lg md:rounded-2xl font-bold transition-all text-xs md:text-base ${activeTab === "logs" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500"}`}>삭제 기록</button>
+        {/* ✨ [2026-10-01] 탭 — 유리 막대 위를 흰 알약이 미끄러지는 세그먼트 */}
+        <div className="max-w-full overflow-x-auto md:overflow-visible no-scrollbar mb-8 md:mb-10 pb-1 -mx-1 px-1">
+          <div className="glass-card inline-flex w-max gap-0.5 p-1 rounded-full">
+            {([
+              ["members", "부원 명단"],
+              ["access", "통합 로그"],
+              ["logs", "삭제 기록"],
+              ["discord", "디스코드 확인"],
+              ["roster", "명단 대조"],
+              ["fee", "회비"],
+              ["activity", "활동 현황"],
+              ["notice", "총회 공지"],
+              ["achievements", "실적"],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => { setActiveTab(id); setSearchQuery(""); }}
+                className={`relative shrink-0 h-9 md:h-10 px-4 md:px-5 rounded-full text-[13px] md:text-sm font-semibold whitespace-nowrap transition-colors ${activeTab === id ? "text-[#1D1D1F]" : "text-[#1D1D1F]/55 hover:text-[#1D1D1F]"}`}
+              >
+                {activeTab === id && (
+                  <motion.span
+                    layoutId="adminTabPill"
+                    className="absolute inset-0 rounded-full bg-[#fff] shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_3px_rgb(0_0_0/0.10)]"
+                    transition={{ type: "spring", bounce: 0.15, duration: 0.45 }}
+                  />
+                )}
+                <span className="relative">{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {activeTab === "members" && (
@@ -426,31 +687,63 @@ export const AdminPage = () => {
 
         {activeTab === "access" && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 md:space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-              <div className="flex items-center gap-3 md:gap-4 bg-white p-3 md:p-4 rounded-xl md:rounded-[2rem] border border-slate-100 shadow-sm overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-1.5 md:py-2 bg-indigo-50 text-indigo-600 rounded-lg md:rounded-xl shrink-0"><Calendar size={16} /><span className="text-[10px] font-black uppercase">날짜</span></div>
-                <div className="flex gap-1.5">
-                  <button onClick={() => setSelectedDate("ALL")} className={`px-4 md:px-5 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap ${selectedDate === "ALL" ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400"}`}>전체보기</button>
-                  {getAvailableDates().map(date => <button key={date} onClick={() => setSelectedDate(date)} className={`px-4 md:px-5 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap ${selectedDate === date ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400"}`}>{date}</button>)}
+            {/* ✨ [2026-09-30] 날짜·시간 필터 — 스크롤 없이 한 줄에 들어가게. 날짜는 전체/오늘/어제/그저께 + "다른 날짜" 달력,
+                시간 선택 색도 날짜와 같은 색으로 통일 */}
+            {/* relative z-20 — 달력 팝업이 아래 로그 카드(유리 효과로 각자 층을 만듦)에 가려지지 않게 */}
+            <div className="relative z-20 grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
+              <div className="flex items-center gap-2 md:gap-3 bg-white p-2.5 md:p-3 rounded-xl md:rounded-[2rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 md:py-2 bg-indigo-50 text-indigo-600 rounded-lg md:rounded-xl shrink-0"><Calendar size={15} /><span className="text-[10px] font-black">날짜</span></div>
+                <div className="flex flex-wrap gap-1.5 min-w-0">
+                  <button onClick={() => setSelectedDate("ALL")} className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap ${selectedDate === "ALL" ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400 hover:text-slate-600"}`}>전체보기</button>
+                  {recentDateChips.map((c) => (
+                    <button key={c.value} onClick={() => setSelectedDate(c.value)} title={c.value} className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap ${selectedDate === c.value ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400 hover:text-slate-600"}`}>
+                      {c.label} <span className="opacity-60 font-medium">{c.short}</span>
+                    </button>
+                  ))}
+                  <div className="relative" ref={logCalendarRef}>
+                    <button
+                      onClick={() => setLogCalendarOpen((v) => !v)}
+                      aria-expanded={logCalendarOpen}
+                      className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 ${isCustomDate || logCalendarOpen ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400 hover:text-slate-600"}`}
+                    >
+                      <Calendar size={12} /> {isCustomDate ? selectedDate.slice(5).replace("-", ".") : "다른 날짜"}
+                    </button>
+                    {logCalendarOpen && (
+                      <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 z-50">
+                        <MiniCalendar
+                          value={isCustomDate ? selectedDate : null}
+                          max={recentDateChips[0].value}
+                          marked={logDates}
+                          onSelect={(d) => { setSelectedDate(d); setLogCalendarOpen(false); }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-3 md:gap-4 bg-white p-3 md:p-4 rounded-xl md:rounded-[2rem] border border-slate-100 shadow-sm overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-1.5 md:py-2 bg-amber-50 text-amber-600 rounded-lg md:rounded-xl shrink-0"><Clock size={16} /><span className="text-[10px] font-black uppercase">시간</span></div>
-                <div className="flex gap-1.5">
+              <div className="flex items-center gap-2 md:gap-3 bg-white p-2.5 md:p-3 rounded-xl md:rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 md:py-2 bg-indigo-50 text-indigo-600 rounded-lg md:rounded-xl shrink-0"><Clock size={15} /><span className="text-[10px] font-black">시간</span></div>
+                <div className="flex flex-wrap gap-1.5 min-w-0">
                   {[{ id: "ALL", label: "전체" }, { id: "MORNING", label: "오전" }, { id: "AFTERNOON", label: "오후" }, { id: "EVENING", label: "저녁" }, { id: "NIGHT", label: "새벽" }].map(r => (
-                    <button key={r.id} onClick={() => setSelectedTimeRange(r.id)} className={`px-4 md:px-5 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap ${selectedTimeRange === r.id ? "bg-amber-500 text-white" : "bg-slate-50 text-slate-400"}`}>{r.label}</button>
+                    <button key={r.id} onClick={() => setSelectedTimeRange(r.id)} className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold transition-all whitespace-nowrap ${selectedTimeRange === r.id ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400 hover:text-slate-600"}`}>{r.label}</button>
                   ))}
                 </div>
               </div>
             </div>
-            {Object.entries(groupLogsByDate(accessLogs)).map(([date, logs]) => (
+            <div className="flex items-center justify-between px-1 md:px-2">
+              <span className="text-[10px] md:text-xs font-bold text-slate-400">
+                전체 {filteredLogsFlat.length.toLocaleString()}건 중 {filteredLogsFlat.length === 0 ? 0 : logsPage * LOGS_PER_PAGE + 1}–{Math.min((logsPage + 1) * LOGS_PER_PAGE, filteredLogsFlat.length)}건 표시
+              </span>
+            </div>
+
+            {Object.entries(groupLogsByDate(pagedLogs)).map(([date, logs]) => (
               <div key={date} className="space-y-3 md:space-y-4">
                 <div className="flex items-center gap-3 md:gap-4 px-1 md:px-2"><div className="h-px flex-grow bg-slate-200" /><span className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">{date}</span><div className="h-px flex-grow bg-slate-200" /></div>
                 <div className="bg-white rounded-xl md:rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
                   <div className="overflow-x-auto no-scrollbar">
                     <table className="w-full text-left table-fixed min-w-[500px]">
                       <tbody className="divide-y divide-slate-50 text-xs md:text-sm">
-                        {logs.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).map((log) => {
+                        {logs.map((log) => {
                           const style = getLogStyle(log.type);
                           return (
                             <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
@@ -467,6 +760,63 @@ export const AdminPage = () => {
                 </div>
               </div>
             ))}
+
+            {filteredLogsFlat.length === 0 && (
+              <div className="text-center py-16 md:py-20 bg-white rounded-2xl md:rounded-[3rem] border border-dashed border-slate-200">
+                <p className="text-slate-300 font-black uppercase tracking-widest text-xs md:text-sm">해당 조건의 로그가 없습니다.</p>
+              </div>
+            )}
+
+            {totalLogsPages > 1 && (
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2 md:pt-4">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setLogsPage(Math.max(0, logPageGroupStart - LOG_PAGE_GROUP))}
+                    disabled={logPageGroupStart === 0}
+                    aria-label="이전 페이지 묶음"
+                    className="w-9 h-9 flex items-center justify-center bg-white border border-slate-200 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+                  >
+                    <ChevronDown className="rotate-90 w-4 h-4 text-slate-500" />
+                  </button>
+                  {Array.from({ length: Math.min(LOG_PAGE_GROUP, totalLogsPages - logPageGroupStart) }, (_, i) => logPageGroupStart + i).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setLogsPage(p)}
+                      className={`min-w-9 h-9 px-2 rounded-xl text-xs md:text-sm font-bold tabular-nums transition-colors ${
+                        p === logsPage ? "bg-indigo-600 text-white" : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      {p + 1}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setLogsPage(Math.min(totalLogsPages - 1, logPageGroupStart + LOG_PAGE_GROUP))}
+                    disabled={logPageGroupStart + LOG_PAGE_GROUP >= totalLogsPages}
+                    aria-label="다음 페이지 묶음"
+                    className="w-9 h-9 flex items-center justify-center bg-white border border-slate-200 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+                  >
+                    <ChevronDown className="-rotate-90 w-4 h-4 text-slate-500" />
+                  </button>
+                </div>
+                <form
+                  onSubmit={(e) => { e.preventDefault(); jumpToLogPage(); }}
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-400"
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalLogsPages}
+                    value={logPageJump}
+                    onChange={(e) => setLogPageJump(e.target.value)}
+                    placeholder={String(logsPage + 1)}
+                    aria-label="이동할 페이지"
+                    className="w-16 h-9 px-2 text-center rounded-xl border border-slate-200 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span>/ {totalLogsPages}</span>
+                  <button type="submit" className="h-9 px-3 rounded-xl bg-slate-900 text-white hover:bg-black">이동</button>
+                </form>
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -508,6 +858,414 @@ export const AdminPage = () => {
             )}
           </motion.div>
         )}
+
+        {/* ✨ [신규] 디스코드 확인 탭 — 웹사이트 회원이 실제로 동아리 디스코드 서버에 남아있는지 확인 */}
+        {activeTab === "discord" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-3 bg-white rounded-xl md:rounded-2xl border border-slate-100 w-fit shadow-sm">
+                  <UserX size={16} className="text-red-500" />
+                  <span className="text-[11px] md:text-sm font-black text-slate-600 tracking-tight uppercase">
+                    디스코드에 없음: <span className="text-red-500">
+                      {discordCheckItems ? discordCheckItems.filter(m => !m.inGuild && !m.departed).length : "-"}
+                    </span> 명
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-3 bg-white rounded-xl md:rounded-2xl border border-slate-100 w-fit shadow-sm">
+                  <UserMinus size={16} className="text-slate-400" />
+                  <span className="text-[11px] md:text-sm font-black text-slate-600 tracking-tight uppercase">
+                    나간 인원 표시: <span className="text-slate-500">
+                      {discordCheckItems ? discordCheckItems.filter(m => m.departed).length : "-"}
+                    </span> 명
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto">
+                <div className="relative flex-1 md:w-72">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="이름, 학번 또는 태그 검색..."
+                    className="w-full pl-11 pr-4 py-3 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-all font-bold text-xs md:text-sm"
+                  />
+                </div>
+                <button
+                  onClick={fetchDiscordCheck}
+                  disabled={isDiscordCheckLoading}
+                  className="flex items-center gap-1.5 px-4 py-3 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700 shadow-sm text-[11px] md:text-sm shrink-0 disabled:opacity-50"
+                >
+                  <RefreshCcw size={14} className={isDiscordCheckLoading ? "animate-spin" : ""} /> 새로고침
+                </button>
+              </div>
+            </div>
+
+            {isDiscordCheckLoading && !discordCheckItems ? (
+              <div className="flex flex-col items-center justify-center py-20 md:py-40 text-slate-400">
+                <Loader2 className="animate-spin mb-4" size={32} />
+                <p className="font-bold uppercase tracking-widest text-[10px]">디스코드 서버 확인 중...</p>
+              </div>
+            ) : discordCheckError ? (
+              <div className="text-center py-16 md:py-20 bg-white rounded-2xl md:rounded-[3rem] border border-dashed border-red-200">
+                <AlertTriangle className="mx-auto text-red-400 mb-3" size={32} />
+                <p className="text-red-500 font-bold text-sm mb-4">{discordCheckError}</p>
+                <button onClick={fetchDiscordCheck} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-sm">다시 시도</button>
+              </div>
+            ) : discordCheckItems && (
+              <>
+                {(() => {
+                  const filtered = getFilteredDiscordItems(discordCheckItems);
+                  // "나간 인원"으로 이미 표시된 회원은 아래 두 목록(나간 것으로 추정/정상)에서 빼서
+                  // 세 번째 섹션에 따로 모아 보여준다 — inGuild 여부와 무관하게 한 곳에 모임
+                  const left = filtered.filter(m => !m.inGuild && !m.departed);
+                  const inGuild = filtered.filter(m => m.inGuild && !m.departed);
+                  const departedList = filtered.filter(m => m.departed);
+                  return (
+                    <>
+                      <div className="mb-8 md:mb-12">
+                        <div className="flex items-center gap-2 mb-3 md:mb-4 px-1 md:px-2">
+                          <UserX className="text-red-500 w-4 h-4 md:w-5 md:h-5" />
+                          <h3 className="text-sm md:text-lg font-black text-red-500 tracking-tight uppercase">디스코드에서 나간 것으로 추정 ({left.length})</h3>
+                        </div>
+                        {left.length > 0 ? (
+                          <div className="bg-white rounded-[1.5rem] md:rounded-[2.5rem] border border-red-100 shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto no-scrollbar">
+                              <table className="w-full text-left border-collapse min-w-[500px]">
+                                <thead>
+                                  <tr className="bg-red-50/50 border-b border-red-100 text-[9px] md:text-[10px] font-black text-red-400 uppercase tracking-widest">
+                                    <th className="px-4 md:px-8 py-4 md:py-5 w-[35%]">부원 정보</th>
+                                    <th className="px-4 md:px-8 py-4 md:py-5 w-[20%]">학번</th>
+                                    <th className="px-4 md:px-8 py-4 md:py-5 w-[25%]">디스코드</th>
+                                    <th className="px-4 md:px-8 py-4 md:py-5 text-center w-[20%]">관리</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-red-50 text-xs md:text-sm">
+                                  {left.map((m) => (
+                                    <tr key={m.id} className="hover:bg-red-50/30 transition-colors">
+                                      <td className="px-4 md:px-8 py-4 md:py-6">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-black text-slate-900 truncate">{m.name}</span>
+                                          {m.role === "ADMIN" && <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-600 text-[7px] md:text-[9px] font-black rounded uppercase shrink-0">ADMIN</span>}
+                                        </div>
+                                        <span className="text-[9px] md:text-[11px] text-slate-400 font-bold">{m.userStatus}</span>
+                                      </td>
+                                      <td className="px-4 md:px-8 py-4 md:py-6 text-slate-500 font-bold tracking-wider text-[11px] md:text-sm">{m.studentId}</td>
+                                      <td className="px-4 md:px-8 py-4 md:py-6 text-red-500 font-bold text-[11px] md:text-sm truncate">@{m.discordTag || "미연동"}</td>
+                                      <td className="px-4 md:px-8 py-4 md:py-6 text-center">
+                                        <div className="flex items-center justify-center gap-1.5 md:gap-2">
+                                          <button onClick={() => handleToggleDeparted(m)} className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-50 text-slate-500 border border-slate-100 hover:bg-slate-600 hover:text-white rounded-lg md:rounded-xl transition-all shadow-sm font-black text-[10px] md:text-xs">
+                                            <UserMinus size={13} /> 나간 인원으로 표시
+                                          </button>
+                                          <button onClick={() => handleDeleteFromDiscordCheck(m)} className="inline-flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 border border-red-100 hover:bg-red-600 hover:text-white rounded-lg md:rounded-xl transition-all shadow-sm font-black text-[10px] md:text-xs">
+                                            <Trash2 size={13} /> 계정 삭제
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-10 bg-white rounded-2xl md:rounded-[2.5rem] border border-dashed border-slate-200">
+                            <p className="text-slate-300 font-bold text-sm">디스코드를 나간 것으로 보이는 회원이 없습니다.</p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2 mb-3 md:mb-4 px-1 md:px-2">
+                          <CheckCircle2 className="text-green-500 w-4 h-4 md:w-5 md:h-5" />
+                          <h3 className="text-sm md:text-lg font-black text-green-600 tracking-tight uppercase">정상 (디스코드 서버에 있음) ({inGuild.length})</h3>
+                        </div>
+                        <div className="bg-white rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden opacity-80">
+                          <div className="overflow-x-auto no-scrollbar max-h-[400px] overflow-y-auto">
+                            <table className="w-full text-left border-collapse min-w-[500px]">
+                              <thead className="sticky top-0 bg-white">
+                                <tr className="bg-slate-50/50 border-b border-slate-100 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                  <th className="px-4 md:px-8 py-4 md:py-5 w-[35%]">부원 정보</th>
+                                  <th className="px-4 md:px-8 py-4 md:py-5 w-[25%]">학번</th>
+                                  <th className="px-4 md:px-8 py-4 md:py-5 w-[40%]">디스코드</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50 text-xs md:text-sm">
+                                {inGuild.map((m) => (
+                                  <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
+                                    <td className="px-4 md:px-8 py-3 md:py-4 font-bold text-slate-700 truncate">{m.name}</td>
+                                    <td className="px-4 md:px-8 py-3 md:py-4 text-slate-400 font-bold truncate">{m.studentId}</td>
+                                    <td className="px-4 md:px-8 py-3 md:py-4 text-indigo-500 font-bold truncate">@{m.discordTag}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ✨ [2026-09-08 추가] 나간 인원으로 표시된 회원 — 계정은 그대로, 커뮤니티 목록에서만 제외됨.
+                          여기서 다시 눌러 언제든 해제(원복) 가능 */}
+                      {departedList.length > 0 && (
+                        <div className="mt-8 md:mt-12">
+                          <div className="flex items-center gap-2 mb-3 md:mb-4 px-1 md:px-2">
+                            <UserMinus className="text-slate-400 w-4 h-4 md:w-5 md:h-5" />
+                            <h3 className="text-sm md:text-lg font-black text-slate-500 tracking-tight uppercase">나간 인원으로 표시됨 ({departedList.length})</h3>
+                          </div>
+                          <div className="bg-white rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto no-scrollbar">
+                              <table className="w-full text-left border-collapse min-w-[500px]">
+                                <thead>
+                                  <tr className="bg-slate-50/50 border-b border-slate-100 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                    <th className="px-4 md:px-8 py-4 md:py-5 w-[35%]">부원 정보</th>
+                                    <th className="px-4 md:px-8 py-4 md:py-5 w-[20%]">학번</th>
+                                    <th className="px-4 md:px-8 py-4 md:py-5 w-[25%]">디스코드</th>
+                                    <th className="px-4 md:px-8 py-4 md:py-5 text-center w-[20%]">관리</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50 text-xs md:text-sm">
+                                  {departedList.map((m) => (
+                                    <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
+                                      <td className="px-4 md:px-8 py-4 md:py-6">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-bold text-slate-500 truncate">{m.name}</span>
+                                          <span className={`px-1.5 py-0.5 text-[7px] md:text-[9px] font-black rounded uppercase shrink-0 ${m.inGuild ? "bg-green-50 text-green-500" : "bg-red-50 text-red-500"}`}>
+                                            {m.inGuild ? "디스코드 있음" : "디스코드 없음"}
+                                          </span>
+                                        </div>
+                                        <span className="text-[9px] md:text-[11px] text-slate-400 font-bold">{m.userStatus}</span>
+                                      </td>
+                                      <td className="px-4 md:px-8 py-4 md:py-6 text-slate-400 font-bold tracking-wider text-[11px] md:text-sm">{m.studentId}</td>
+                                      <td className="px-4 md:px-8 py-4 md:py-6 text-slate-400 font-bold text-[11px] md:text-sm truncate">@{m.discordTag || "미연동"}</td>
+                                      <td className="px-4 md:px-8 py-4 md:py-6 text-center">
+                                        <button onClick={() => handleToggleDeparted(m)} className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white rounded-lg md:rounded-xl transition-all shadow-sm font-black text-[10px] md:text-xs">
+                                          <UserCheck size={13} /> 표시 해제
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ✨ [2026-09-08 신규] 디스코드에는 있지만(재학생/휴학생만 대상) 웹사이트에는
+                          아직 가입하지 않은 사람 — 재학생 그룹이 먼저 뜨도록 백엔드에서 순서 보장 */}
+                      {unregisteredGuildMembers && (
+                        <div className="mt-8 md:mt-12">
+                          <div className="flex items-center gap-2 mb-3 md:mb-4 px-1 md:px-2">
+                            <UserPlus className="text-cyan-500 w-4 h-4 md:w-5 md:h-5" />
+                            <h3 className="text-sm md:text-lg font-black text-cyan-600 tracking-tight uppercase">
+                              디스코드엔 있지만 웹 미가입 (
+                              {Object.values(unregisteredGuildMembers).reduce((sum, arr) => sum + arr.length, 0)})
+                            </h3>
+                          </div>
+                          {Object.values(unregisteredGuildMembers).every(arr => arr.length === 0) ? (
+                            <div className="text-center py-10 bg-white rounded-2xl md:rounded-[2.5rem] border border-dashed border-slate-200">
+                              <p className="text-slate-300 font-bold text-sm">웹사이트 미가입 인원이 없습니다.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {Object.entries(unregisteredGuildMembers).filter(([, entries]) => entries.length > 0).map(([status, entries]) => (
+                                <div key={status} className="bg-white rounded-xl md:rounded-[2rem] border border-cyan-100 shadow-sm overflow-hidden">
+                                  <div className="px-4 md:px-6 py-3 bg-cyan-50/50 border-b border-cyan-100 text-[11px] md:text-sm font-black text-cyan-600">{status} ({entries.length})</div>
+                                  <div className="divide-y divide-slate-50">
+                                    {entries.map((e, i) => (
+                                      <div key={i} className="px-4 md:px-6 py-3 flex items-center justify-between text-xs md:text-sm">
+                                        <span className="font-bold text-slate-700">{e.nickname}</span>
+                                        <span className="text-slate-400 font-bold">@{e.discordTag}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </>
+            )}
+          </motion.div>
+        )}
+
+        {/* ✨ [2026-09-08 신규] 명단 대조 탭 — 엑셀 부원 명부를 업로드해서 실제 디스코드 서버와 대조 */}
+        {activeTab === "roster" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 bg-white p-4 md:p-6 rounded-xl md:rounded-[2rem] border border-slate-100 shadow-sm mb-8 md:mb-10">
+              <FileDropZone inputRef={rosterInputRef} className="flex-1 flex min-w-0" label="엑셀 파일을 놓으세요">
+              <label className="flex-1 min-w-0 flex items-center gap-3 px-4 md:px-5 py-3 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl border border-dashed border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors">
+                <FileSpreadsheet size={18} className="text-indigo-500 shrink-0" />
+                <span className="text-xs md:text-sm font-bold text-slate-500 truncate">
+                  {rosterFile ? rosterFile.name : "부원 명부 엑셀(.xlsx) 파일 선택 또는 끌어다 놓기 — 이름/아이디/학번/상태 컬럼 필요"}
+                </span>
+                <input
+                  ref={rosterInputRef}
+                  type="file"
+                  accept=".xlsx"
+                  className="hidden"
+                  onChange={(e) => setRosterFile(e.target.files?.[0] || null)}
+                />
+              </label>
+              </FileDropZone>
+              <button
+                onClick={handleRosterCheck}
+                disabled={isRosterChecking || !rosterFile}
+                className="flex items-center justify-center gap-1.5 md:gap-2 px-5 md:px-6 py-3 md:py-4 bg-indigo-600 text-white font-black rounded-xl md:rounded-2xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 text-xs md:text-sm disabled:opacity-50 shrink-0"
+              >
+                {isRosterChecking ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                {isRosterChecking ? "대조 중..." : "대조 시작"}
+              </button>
+            </div>
+
+            {rosterCheckError && (
+              <div className="text-center py-10 mb-8 bg-white rounded-2xl md:rounded-[2.5rem] border border-dashed border-red-200">
+                <AlertTriangle className="mx-auto text-red-400 mb-3" size={28} />
+                <p className="text-red-500 font-bold text-sm">{rosterCheckError}</p>
+              </div>
+            )}
+
+            {rosterCheckResult && (
+              <div className="space-y-8 md:space-y-12">
+                <div className="flex flex-wrap gap-3">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-white rounded-xl border border-slate-100 shadow-sm">
+                    <ArrowLeftRight size={14} className="text-indigo-500" />
+                    <span className="text-[11px] md:text-sm font-black text-slate-600">
+                      디스코드 {rosterCheckResult.totalDiscordMembers}명 ↔ 파일 {rosterCheckResult.totalFileRows}행
+                    </span>
+                  </div>
+                </div>
+
+                {/* 1. 파일에 추가해야 할 사람 */}
+                <div>
+                  <h3 className="text-sm md:text-lg font-black text-red-500 tracking-tight uppercase mb-3 md:mb-4 px-1 md:px-2">
+                    파일에 추가해야 할 사람 ({Object.values(rosterCheckResult.discordNotInFile).reduce((sum, arr) => sum + arr.length, 0)})
+                  </h3>
+                  {Object.keys(rosterCheckResult.discordNotInFile).length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200"><p className="text-slate-300 font-bold text-sm">해당 없음</p></div>
+                  ) : (
+                    <div className="space-y-4">
+                      {Object.entries(rosterCheckResult.discordNotInFile).map(([status, entries]) => (
+                        <div key={status} className="bg-white rounded-xl md:rounded-[2rem] border border-red-100 shadow-sm overflow-hidden">
+                          <div className="px-4 md:px-6 py-3 bg-red-50/50 border-b border-red-100 text-[11px] md:text-sm font-black text-red-500">{status} ({entries.length})</div>
+                          <div className="divide-y divide-slate-50">
+                            {entries.map((e, i) => (
+                              <div key={i} className="px-4 md:px-6 py-3 flex items-center justify-between text-xs md:text-sm">
+                                <span className="font-bold text-slate-700">{e.nickname}</span>
+                                <span className="text-slate-400 font-bold">@{e.discordTag}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. 파일에서 확인이 필요한 사람 */}
+                <div>
+                  <h3 className="text-sm md:text-lg font-black text-amber-500 tracking-tight uppercase mb-3 md:mb-4 px-1 md:px-2">
+                    파일에서 확인이 필요한 사람 ({Object.values(rosterCheckResult.fileNotInDiscord).reduce((sum, arr) => sum + arr.length, 0)})
+                  </h3>
+                  {Object.keys(rosterCheckResult.fileNotInDiscord).length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200"><p className="text-slate-300 font-bold text-sm">해당 없음</p></div>
+                  ) : (
+                    <div className="space-y-4">
+                      {Object.entries(rosterCheckResult.fileNotInDiscord).map(([status, entries]) => (
+                        <div key={status} className="bg-white rounded-xl md:rounded-[2rem] border border-amber-100 shadow-sm overflow-hidden">
+                          <div className="px-4 md:px-6 py-3 bg-amber-50/50 border-b border-amber-100 text-[11px] md:text-sm font-black text-amber-500">{status} ({entries.length})</div>
+                          <div className="divide-y divide-slate-50">
+                            {entries.map((e, i) => (
+                              <div key={i} className="px-4 md:px-6 py-3 flex items-center justify-between text-xs md:text-sm">
+                                <span className="font-bold text-slate-700">{e.name} <span className="text-slate-400 font-normal">({e.studentId})</span></span>
+                                <span className="text-slate-400 font-bold">예상 닉네임: {e.expectedNickname}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. 디스코드 아이디가 바뀐 사람 */}
+                <div>
+                  <h3 className="text-sm md:text-lg font-black text-indigo-500 tracking-tight uppercase mb-3 md:mb-4 px-1 md:px-2">
+                    디스코드 아이디가 바뀐 사람 ({rosterCheckResult.idChanged.length})
+                  </h3>
+                  {rosterCheckResult.idChanged.length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200"><p className="text-slate-300 font-bold text-sm">해당 없음</p></div>
+                  ) : (
+                    <div className="bg-white rounded-xl md:rounded-[2rem] border border-indigo-100 shadow-sm overflow-hidden divide-y divide-slate-50">
+                      {rosterCheckResult.idChanged.map((e, i) => (
+                        <div key={i} className="px-4 md:px-6 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-xs md:text-sm">
+                          <span className="font-bold text-slate-700">{e.nickname} <span className="text-slate-400 font-normal">({e.studentId})</span></span>
+                          <span className="text-slate-500 font-bold">파일: @{e.fileId || "(없음)"} → 현재: @{e.currentDiscordId}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. 파일 상태와 디스코드 역할이 다른 사람 */}
+                <div>
+                  <h3 className="text-sm md:text-lg font-black text-cyan-600 tracking-tight uppercase mb-3 md:mb-4 px-1 md:px-2">
+                    파일 상태와 디스코드 역할이 다른 사람 ({rosterCheckResult.statusMismatch.length})
+                  </h3>
+                  {rosterCheckResult.statusMismatch.length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200"><p className="text-slate-300 font-bold text-sm">해당 없음</p></div>
+                  ) : (
+                    <div className="bg-white rounded-xl md:rounded-[2rem] border border-cyan-100 shadow-sm overflow-hidden divide-y divide-slate-50">
+                      {rosterCheckResult.statusMismatch.map((e, i) => (
+                        <div key={i} className="px-4 md:px-6 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-xs md:text-sm">
+                          <span className="font-bold text-slate-700">{e.name} <span className="text-slate-400 font-normal">({e.studentId})</span></span>
+                          <span className="text-slate-500 font-bold">파일 상태: {e.fileStatus} (기대: {e.expectedStatus}) → 현재 디스코드: {e.currentDiscordStatus}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 5. 형식을 해석할 수 없는 행 */}
+                <div>
+                  <h3 className="text-sm md:text-lg font-black text-slate-400 tracking-tight uppercase mb-3 md:mb-4 px-1 md:px-2">
+                    형식을 해석할 수 없는 행 ({rosterCheckResult.unmatchedRows.length})
+                  </h3>
+                  {rosterCheckResult.unmatchedRows.length === 0 ? (
+                    <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200"><p className="text-slate-300 font-bold text-sm">해당 없음</p></div>
+                  ) : (
+                    <div className="bg-white rounded-xl md:rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-50">
+                      {rosterCheckResult.unmatchedRows.map((e, i) => (
+                        <div key={i} className="px-4 md:px-6 py-3 flex items-center justify-between text-xs md:text-sm">
+                          <span className="font-bold text-slate-700">{e.name || "(이름 없음)"} <span className="text-slate-400 font-normal">({e.studentId || "학번 없음"})</span></span>
+                          <span className="text-slate-400 font-bold">{e.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!rosterCheckResult && !rosterCheckError && !isRosterChecking && (
+              <div className="text-center py-16 md:py-24 bg-white rounded-2xl md:rounded-[3rem] border border-dashed border-slate-200">
+                <FileSpreadsheet className="mx-auto text-slate-200 mb-3" size={36} />
+                <p className="text-slate-300 font-black uppercase tracking-widest text-xs md:text-sm">엑셀 파일을 업로드하면 대조 결과가 여기에 표시됩니다.</p>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* ✨ [2026-09-09 신규] 회비 탭 */}
+        {activeTab === "fee" && <FeeTab key="fee" />}
+        {activeTab === "activity" && <ActivityTab key="activity" />}
+        {activeTab === "notice" && <AssemblyNoticeTab key="notice" />}
+        {activeTab === "achievements" && <AchievementsTab key="achievements" />}
       </div>
 
       <AnimatePresence>

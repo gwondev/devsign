@@ -1,18 +1,19 @@
 import { motion } from "framer-motion";
-import { MessageSquare, Eye, Heart, ArrowRight, User, Wallet } from "lucide-react";
+import { MessageSquare, Eye, Heart, ArrowRight, User, Wallet, Lock } from "lucide-react";
 
 interface BoardSectionProps {
   onNavigate: (pageId: string, itemId?: any) => void;
   posts: any[];
+  isLoggedIn?: boolean;
 }
 
-export const Board = ({ onNavigate, posts }: BoardSectionProps) => {
+export const Board = ({ onNavigate, posts, isLoggedIn }: BoardSectionProps) => {
   return (
-    <div id="board" className="py-10 md:py-16 bg-slate-50 scroll-mt-20 px-4 md:px-6">
+    <div id="board" className="py-10 md:py-16 bg-[#FCFCFD] scroll-mt-20 px-4 md:px-6">
       <div className="max-w-7xl mx-auto px-2 md:px-6">
         
         {/* ✨ 상단 헤더 영역: 전체 보기 버튼이 항상 '게시판' 글씨 우측 끝에 오도록 flex-row 고정 */}
-        <div className="flex flex-row justify-between items-end mb-8 md:mb-16 gap-4 md:gap-6">
+        <div className="flex flex-row justify-between items-end mb-6 md:mb-8 gap-4 md:gap-6">
           <div>
             <motion.div 
               initial={{ opacity: 0, x: -20 }} 
@@ -52,6 +53,11 @@ export const Board = ({ onNavigate, posts }: BoardSectionProps) => {
                   {post.category === "회비" && <Wallet size={10} className="inline mr-1 mb-0.5" />}
                   {post.category || "일반"}
                 </span>
+                {post.category === "회비" && !isLoggedIn && (
+                  <span className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] md:text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100">
+                    <Lock size={9} /> 로그인 필요
+                  </span>
+                )}
               </div>
               
               {/* 제목 */}
@@ -59,10 +65,17 @@ export const Board = ({ onNavigate, posts }: BoardSectionProps) => {
                 {post.title}
               </h3>
               
-              {/* 내용 */}
-              <p className="text-slate-400 font-bold text-xs md:text-sm mb-4 md:mb-6 line-clamp-2 flex-1 leading-relaxed">
-                {post.content}
-              </p>
+              {/* 내용 — 회비 글은 최종 잔액을 요약해서 보여줌(항목별 내역은 상세에서만) */}
+              {post.category === "회비" && post.feeTerm ? (
+                <p className="text-amber-700 font-black text-xs md:text-sm mb-4 md:mb-6 line-clamp-2 flex-1 leading-relaxed">
+                  {post.feeTerm}
+                  <span className="text-amber-400 font-bold"> · 잔액 {(post.feeFinalBalance ?? 0).toLocaleString()}원</span>
+                </p>
+              ) : (
+                <p className="text-slate-400 font-bold text-xs md:text-sm mb-4 md:mb-6 line-clamp-2 flex-1 leading-relaxed">
+                  {post.content}
+                </p>
+              )}
 
               {/* 하단 정보 영역 */}
               {/* ✨ 모바일 여백 축소 (pt-4), 데스크탑 유지 (md:pt-6) */}

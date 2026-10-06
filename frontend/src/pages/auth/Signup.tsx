@@ -1,20 +1,28 @@
 import { api } from "../../api/axios";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  User, Lock, MessageSquare, GraduationCap, 
-  Heart, ArrowRight, ArrowLeft, ShieldCheck, Timer, CheckCircle2
+import {
+  User,
+  Lock,
+  MessageSquare,
+  GraduationCap,
+  Heart,
+  ArrowRight,
+  ArrowLeft,
+  Timer,
+  CheckCircle2
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
 const DEPARTMENTS = [
   "AI소프트웨어학부(컴퓨터공학전공)",
   "전자공학과",
-  "AI소프트웨어학부(정보통신전공)",
+  "AI소프트웨어학부(정보통신공학전공)",
   "AI소프트웨어학부(인공지능공학전공)",
-  "AI소프트웨어학부(모빌리티SW전공)"
+  "AI소프트웨어학부(모빌리티SW공학)"
 ];
-const INTERESTS = ["인공지능", "웹 개발", "게임 개발", "임베디드 / 시스템", "기타"];
+
+const INTERESTS = ["인공지능", "웹 개발", "게임 개발", "백엔드 / 시스템", "기타"];
 
 export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) => {
   const [formData, setFormData] = useState({
@@ -29,7 +37,10 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
   const [idChecked, setIdChecked] = useState(false);
   const [discordVerified, setDiscordVerified] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
+  const [verificationToken, setVerificationToken] = useState("");
   const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isSigningUp, setIsSigningUp] = useState(false);
+  const signupLockRef = useRef(false);
 
   const [verifiedInfo, setVerifiedInfo] = useState<{
     name: string;
@@ -38,15 +49,13 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
     role: string;
   } | null>(null);
 
-  const [timeLeft, setTimeLeft] = useState(0); 
+  const [timeLeft, setTimeLeft] = useState(0);
   const [isTimerActive, setIsTimerActive] = useState(false);
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setInterval> | undefined;
     if (isTimerActive && timeLeft > 0) {
-      timer = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-      }, 1000);
+      timer = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
     } else if (timeLeft === 0) {
       setIsTimerActive(false);
     }
@@ -64,45 +73,43 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
 
   const handleCheckId = async () => {
     if (!idRegex.test(formData.userId)) {
-      return alert("아이디는 문자(한글/영문) 또는 문자+숫자 조합으로 6자 이상이어야 합니다.");
+      return alert("아이디는 6자 이상(영문/숫자 조합)이어야 합니다.");
     }
+
     try {
       const response = await api.get(`/members/check/${formData.userId}`);
       if (response.data === true) {
-        alert("이미 사용 중인 아이디입니다. ❌");
+        alert("이미 사용 중인 아이디입니다.");
         setIdChecked(false);
       } else {
-        alert("사용 가능한 아이디입니다! ✅");
+        alert("사용 가능한 아이디입니다.");
         setIdChecked(true);
       }
-    } catch (error) {
-      alert("서버 통신 오류가 발생했습니다.");
+    } catch {
+      alert("아이디 중복 확인 중 오류가 발생했습니다.");
     }
   };
 
   const handleSendDiscordCode = async () => {
     if (formData.discord.length < 2 || formData.discord.includes(" ")) {
-      return alert("올바른 디스코드 사용자명을 입력해주세요. (공백 제외)");
+      return alert("공백 없이 디스코드 사용자명을 입력해주세요.");
     }
+
     setIsSendingCode(true);
     try {
       const discordTag = formData.discord.replace("@", "");
-      const response = await api.post("/members/discord-send", {
-        discordTag: discordTag
-      });
-      
+      const response = await api.post("/members/discord-send", { discordTag });
+
       if (response.data.status === "success") {
         setTimeLeft(300);
         setIsTimerActive(true);
-        alert(`@${discordTag}님의 디스코드 DM으로 인증번호가 발송되었습니다. 📩`);
-      } else if (response.data.status === "bot_error") {
-        alert("디스코드 봇 서버에 문제가 발생했습니다. 관리자에게 문의하세요.");
+        alert(`디스코드(${discordTag}) DM으로 인증번호를 보냈습니다.`);
       } else {
-        alert("인증번호 발송에 실패했습니다. 동아리 서버에 계정이 있는지 확인해주세요.");
+        alert("인증번호 전송에 실패했습니다.");
       }
-    } catch (e) {
-      console.error("인증번호 발송 에러:", e);
-      alert("서버 통신 중 오류가 발생했습니다.");
+    } catch (error) {
+      console.error("인증번호 전송 오류:", error);
+      alert("인증번호 전송 중 오류가 발생했습니다.");
     } finally {
       setIsSendingCode(false);
     }
@@ -110,59 +117,72 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
 
   const handleVerifyCode = async () => {
     if (timeLeft === 0 && !discordVerified) {
-      return alert("인증 시간이 만료되었습니다. 번호를 다시 전송해주세요.");
+      return alert("인증 시간이 만료되었습니다. 인증번호를 다시 요청해주세요.");
     }
-    if (verificationCode.length !== 6) return alert("인증번호 6자리를 입력해주세요.");
-    
+    if (verificationCode.length !== 6) {
+      return alert("인증번호 6자리를 입력해주세요.");
+    }
+
     try {
       const discordTag = formData.discord.replace("@", "");
       const response = await api.post("/members/verify-code", {
-        discordTag: discordTag,
+        discordTag,
         code: verificationCode
       });
 
-      if (response.data.status === "success") {
-        setVerifiedInfo({
-          name: response.data.name,
-          studentId: response.data.studentId, 
-          userStatus: response.data.userStatus,
-          role: response.data.role
-        });
-        setDiscordVerified(true);
-        setIsTimerActive(false);
-        alert(`인증 성공! 🎉 [${response.data.studentId}학번 ${response.data.name}]님 확인되었습니다.`);
-      } else {
-        alert("인증번호가 일치하지 않거나 만료되었습니다. ❌");
+      if (response.data.status !== "success") {
+        return alert("인증번호가 일치하지 않거나 만료되었습니다.");
       }
+
+      if (!response.data.verificationToken) {
+        return alert("인증 토큰이 발급되지 않았습니다. 다시 시도해주세요.");
+      }
+
+      setVerifiedInfo({
+        name: response.data.name,
+        studentId: response.data.studentId,
+        userStatus: response.data.userStatus,
+        role: response.data.role
+      });
+      setVerificationToken(response.data.verificationToken);
+      setDiscordVerified(true);
+      setIsTimerActive(false);
+      alert(`인증 성공: ${response.data.studentId}학번 ${response.data.name}`);
     } catch (error) {
-      console.error("인증 에러:", error);
-      alert("인증 확인 중 서버 오류가 발생했습니다.");
+      console.error("인증 확인 오류:", error);
+      alert("인증 확인 중 오류가 발생했습니다.");
     }
   };
 
   const handleSignup = async () => {
+    if (signupLockRef.current) return;
     if (!idChecked) return alert("아이디 중복 확인을 완료해주세요.");
     if (!idRegex.test(formData.userId)) return alert("아이디 형식을 확인해주세요.");
-    if (!passwordRegex.test(formData.password)) return alert("비밀번호 형식을 확인해주세요.");
+    if (!passwordRegex.test(formData.password)) return alert("비밀번호는 특수문자 포함 8자 이상이어야 합니다.");
     if (!formData.dept) return alert("학과를 선택해주세요.");
     if (!discordVerified || !verifiedInfo) return alert("디스코드 인증을 완료해주세요.");
+    if (!verificationToken) return alert("인증 토큰이 없습니다. 다시 인증해주세요.");
 
+    signupLockRef.current = true;
+    setIsSigningUp(true);
     try {
       const response = await api.post("/members/signup", {
         loginId: formData.userId,
         password: formData.password,
         dept: formData.dept,
         interests: formData.interest === "기타" ? formData.otherInterest : formData.interest,
-        discordTag: formData.discord.replace("@", ""),
-        authCode: verificationCode 
+        verificationToken
       });
 
       if (response.status === 200 || response.status === 201) {
-        alert("회원가입을 축하합니다! 🎉");
+        alert("회원가입이 완료되었습니다.");
         onNavigate("signup-success");
       }
-    } catch (error) {
-      alert("회원가입에 실패했습니다. 이미 가입된 계정인지 확인해주세요.");
+    } catch {
+      alert("회원가입에 실패했습니다.");
+    } finally {
+      setIsSigningUp(false);
+      signupLockRef.current = false;
     }
   };
 
@@ -176,7 +196,7 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
         <div className="bg-white rounded-[2rem] md:rounded-[40px] shadow-2xl shadow-indigo-100/50 border border-slate-100 p-6 md:p-12">
           <div className="mb-8 md:mb-12">
             <h1 className="text-2xl md:text-3xl font-black text-slate-900 mb-1.5 md:mb-2 tracking-tighter">회원가입</h1>
-            <p className="text-slate-500 font-medium text-xs md:text-base">디스코드 인증만으로 간편하게 가입하세요! ✨</p>
+            <p className="text-slate-500 font-medium text-xs md:text-base">디스코드 인증 후 회원가입을 진행합니다.</p>
           </div>
 
           <form className="space-y-8 md:space-y-10" onSubmit={(e) => e.preventDefault()}>
@@ -190,23 +210,31 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <User className={`absolute left-4 md:left-5 top-1/2 -translate-y-1/2 ${idChecked ? "text-green-500" : "text-slate-300"} w-4 h-4 md:w-[18px] md:h-[18px]`} />
-                      <input 
-                        type="text" 
-                        value={formData.userId} 
-                        onChange={(e) => setFormData({...formData, userId: e.target.value.replace(/\s/g, "")})} 
-                        disabled={idChecked} 
-                        placeholder="6자 이상" 
-                        className={`w-full pl-11 md:pl-12 pr-2 py-3.5 md:py-4 rounded-xl md:rounded-2xl outline-none transition-all font-medium text-sm ${idChecked ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-900"}`} 
+                      <input
+                        type="text"
+                        value={formData.userId}
+                        onChange={(e) => setFormData({ ...formData, userId: e.target.value.replace(/\s/g, "") })}
+                        disabled={idChecked}
+                        placeholder="6자 이상"
+                        className={`w-full pl-11 md:pl-12 pr-2 py-3.5 md:py-4 rounded-xl md:rounded-2xl outline-none transition-all font-medium text-sm ${idChecked ? "bg-green-50 text-green-700" : "bg-slate-50 text-slate-900"}`}
                       />
                     </div>
-                    <Button onClick={handleCheckId} disabled={idChecked} className="h-auto px-4 md:px-5 py-3.5 md:py-4 rounded-xl md:rounded-2xl font-bold bg-indigo-600 text-white shadow-lg text-xs md:text-sm shrink-0">중복 확인</Button>
+                    <Button onClick={handleCheckId} disabled={idChecked} className="h-auto px-4 md:px-5 py-3.5 md:py-4 rounded-xl md:rounded-2xl font-bold bg-indigo-600 text-white shadow-lg text-xs md:text-sm shrink-0">
+                      중복 확인
+                    </Button>
                   </div>
                 </div>
+
                 <div className="space-y-1.5 md:space-y-2">
                   <label className="text-[10px] md:text-xs font-black text-slate-400 ml-1 uppercase">비밀번호</label>
                   <div className="relative">
                     <Lock className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4 md:w-[18px] md:h-[18px]" />
-                    <input type="password" placeholder="특수문자 포함 8자 이상" className="w-full pl-11 md:pl-14 pr-4 py-3.5 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium text-sm" onChange={(e) => setFormData({...formData, password: e.target.value})} />
+                    <input
+                      type="password"
+                      placeholder="특수문자 포함 8자 이상"
+                      className="w-full pl-11 md:pl-14 pr-4 py-3.5 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium text-sm"
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    />
                   </div>
                 </div>
               </div>
@@ -215,35 +243,35 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
             <section className="space-y-4 md:space-y-6">
               <h3 className="text-base md:text-lg font-bold text-slate-900 flex items-center gap-2">
                 <span className="w-1 md:w-1.5 h-5 md:h-6 bg-indigo-400 rounded-full" /> 디스코드 인증
+                <DiscordUsernameHelp />
               </h3>
               <div className="space-y-4">
-                <p className="text-[9px] md:text-xs text-slate-400 font-bold leading-relaxed bg-slate-50 p-4 rounded-xl md:rounded-2xl border border-slate-100">
-                  💡 디스코드 사용자명: 디스코드 프로필 확인 | 예)gimhyeongmin5693
-                </p>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <MessageSquare className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4 md:w-[18px] md:h-[18px]" />
-                    <input 
-                      type="text" 
-                      value={formData.discord} 
-                      onChange={(e) => setFormData({...formData, discord: e.target.value})} 
-                      disabled={discordVerified} 
-                      placeholder="디스코드 사용자명" 
-                      className="w-full pl-11 md:pl-14 pr-4 py-3.5 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl outline-none font-medium text-sm" 
+                    <input
+                      type="text"
+                      value={formData.discord}
+                      onChange={(e) => setFormData({ ...formData, discord: e.target.value })}
+                      disabled={discordVerified}
+                      placeholder="디스코드 사용자명"
+                      className="w-full pl-11 md:pl-14 pr-4 py-3.5 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl outline-none font-medium text-sm"
                     />
                   </div>
-                  <Button onClick={handleSendDiscordCode} disabled={discordVerified || isSendingCode} className="h-auto px-4 md:px-5 py-3.5 md:py-4 rounded-xl md:rounded-2xl font-bold border border-indigo-100 text-indigo-600 bg-white hover:bg-indigo-50 text-xs md:text-sm shrink-0">번호 전송</Button>
+                  <Button onClick={handleSendDiscordCode} disabled={discordVerified || isSendingCode} className="h-auto px-4 md:px-5 py-3.5 md:py-4 rounded-xl md:rounded-2xl font-bold border border-indigo-100 text-indigo-600 bg-white hover:bg-indigo-50 text-xs md:text-sm shrink-0">
+                    번호 전송
+                  </Button>
                 </div>
-                
+
                 <div className="flex gap-2 items-stretch">
                   <div className="relative flex-1">
-                    <input 
-                      type="text" 
-                      value={verificationCode} 
-                      onChange={(e) => setVerificationCode(e.target.value)} 
-                      disabled={discordVerified} 
-                      placeholder="인증번호 6자리" 
-                      className="w-full px-4 md:px-6 py-3.5 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl outline-none text-center tracking-widest font-bold h-full text-sm" 
+                    <input
+                      type="text"
+                      value={verificationCode}
+                      onChange={(e) => setVerificationCode(e.target.value)}
+                      disabled={discordVerified}
+                      placeholder="인증번호 6자리"
+                      className="w-full px-4 md:px-6 py-3.5 md:py-4 bg-slate-50 rounded-xl md:rounded-2xl outline-none text-center tracking-widest font-bold h-full text-sm"
                     />
                     {isTimerActive && !discordVerified && (
                       <div className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 flex items-center gap-1 text-indigo-600 font-bold text-[10px] md:text-sm bg-indigo-50 px-2 md:px-3 py-1 md:py-1.5 rounded-lg md:rounded-xl border border-indigo-100">
@@ -252,37 +280,22 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
                       </div>
                     )}
                   </div>
-                  <Button 
-                    onClick={handleVerifyCode} 
-                    disabled={discordVerified || (isTimerActive && timeLeft === 0)} 
-                    className="h-auto px-6 md:px-8 py-3.5 md:py-4 rounded-xl md:rounded-2xl font-bold bg-indigo-600 text-white shadow-lg text-xs md:text-sm shrink-0"
-                  >
+                  <Button onClick={handleVerifyCode} disabled={discordVerified} className="h-auto px-6 md:px-8 py-3.5 md:py-4 rounded-xl md:rounded-2xl font-bold bg-indigo-600 text-white shadow-lg text-xs md:text-sm shrink-0">
                     인증 확인
                   </Button>
                 </div>
 
                 <AnimatePresence>
                   {discordVerified && verifiedInfo && (
-                    <motion.div 
-                      initial={{ opacity: 0, height: 0 }} 
-                      animate={{ opacity: 1, height: "auto" }} 
-                      className="bg-indigo-50 border border-indigo-100 p-4 md:p-6 rounded-2xl md:rounded-3xl flex items-center justify-between shadow-inner"
-                    >
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="bg-indigo-50 border border-indigo-100 p-4 md:p-6 rounded-2xl md:rounded-3xl flex items-center justify-between shadow-inner">
                       <div className="flex items-center gap-3 md:gap-4 min-w-0">
                         <div className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-lg md:rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-100 shrink-0">
                           <CheckCircle2 className="w-5 h-5 md:w-6 md:h-6" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-[9px] md:text-[10px] font-black text-indigo-400 uppercase tracking-tighter">Verified Information</p>
-                          <p className="text-base md:text-lg font-black text-slate-900 truncate">
-                            {verifiedInfo.studentId}학번 {verifiedInfo.name}
-                          </p>
+                          <p className="text-[9px] md:text-[10px] font-black text-indigo-400 uppercase tracking-tighter">Verified</p>
+                          <p className="text-base md:text-lg font-black text-slate-900 truncate">{verifiedInfo.studentId}학번 {verifiedInfo.name}</p>
                         </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
-                        <span className="px-2 py-0.5 md:px-3 md:py-1 bg-indigo-600 text-white text-[8px] md:text-[9px] font-black rounded md:rounded-lg uppercase tracking-widest whitespace-nowrap">
-                          {verifiedInfo.userStatus}
-                        </span>
                       </div>
                     </motion.div>
                   )}
@@ -291,27 +304,34 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
             </section>
 
             <section className="space-y-3 md:space-y-4">
-              <label className="text-xs md:text-sm font-black text-slate-700 ml-1 flex items-center gap-2"><GraduationCap className="text-indigo-600 w-4 h-4 md:w-[18px] md:h-[18px]" /> 소속 학과</label>
+              <label className="text-xs md:text-sm font-black text-slate-700 ml-1 flex items-center gap-2">
+                <GraduationCap className="text-indigo-600 w-4 h-4 md:w-[18px] md:h-[18px]" /> 소속 학과
+              </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {DEPARTMENTS.map((d) => (
-                  <button key={d} type="button" onClick={() => setFormData({ ...formData, dept: d })} className={`py-2.5 md:py-3 px-4 rounded-xl md:rounded-2xl text-[11px] md:text-xs font-bold transition-all text-left ${formData.dept === d ? "bg-indigo-600 text-white shadow-md" : "bg-slate-50 text-slate-500 hover:bg-slate-100"}`}>{d}</button>
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setFormData({ ...formData, dept: d })}
+                    className={`py-2.5 md:py-3 px-4 rounded-xl md:rounded-2xl text-[11px] md:text-xs font-bold transition-all text-left ${formData.dept === d ? "bg-indigo-600 text-white shadow-md" : "bg-slate-50 text-slate-500 hover:bg-slate-100"}`}
+                  >
+                    {d}
+                  </button>
                 ))}
               </div>
             </section>
 
             <section className="space-y-3 md:space-y-4 pt-2 md:pt-4">
-              <label className="text-xs md:text-sm font-black text-slate-700 ml-1 flex items-center gap-2"><Heart className="text-pink-500 w-4 h-4 md:w-[18px] md:h-[18px]" /> 관심 분야</label>
+              <label className="text-xs md:text-sm font-black text-slate-700 ml-1 flex items-center gap-2">
+                <Heart className="text-pink-500 w-4 h-4 md:w-[18px] md:h-[18px]" /> 관심 분야
+              </label>
               <div className="flex flex-wrap gap-1.5 md:gap-2">
                 {INTERESTS.map((interest) => (
                   <button
                     key={interest}
                     type="button"
                     onClick={() => setFormData({ ...formData, interest })}
-                    className={`px-4 md:px-6 py-2 md:py-3 rounded-lg md:rounded-2xl text-[11px] md:text-xs font-bold transition-all ${
-                      formData.interest === interest
-                        ? "bg-pink-500 text-white shadow-md shadow-pink-100"
-                        : "bg-slate-50 text-slate-500 hover:bg-slate-100"
-                    }`}
+                    className={`px-4 md:px-6 py-2 md:py-3 rounded-lg md:rounded-2xl text-[11px] md:text-xs font-bold transition-all ${formData.interest === interest ? "bg-pink-500 text-white shadow-md shadow-pink-100" : "bg-slate-50 text-slate-500 hover:bg-slate-100"}`}
                   >
                     {interest}
                   </button>
@@ -331,14 +351,87 @@ export const Signup = ({ onNavigate }: { onNavigate: (page: string) => void }) =
 
             <Button
               onClick={handleSignup}
-              disabled={!idChecked || !discordVerified}
-              className={`w-full py-4 md:py-6 rounded-xl md:rounded-[2rem] font-bold text-lg md:text-xl mt-8 md:mt-12 transition-all h-auto ${(!idChecked || !discordVerified) ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none" : "bg-indigo-600 text-white shadow-2xl shadow-indigo-100 hover:bg-indigo-700 active:scale-95"}`}
+              disabled={!idChecked || !discordVerified || isSigningUp}
+              className={`w-full py-4 md:py-6 rounded-xl md:rounded-[2rem] font-bold text-lg md:text-xl mt-8 md:mt-12 transition-all h-auto ${!idChecked || !discordVerified || isSigningUp ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none" : "bg-indigo-600 text-white shadow-2xl shadow-indigo-100 hover:bg-indigo-700 active:scale-95"}`}
             >
-              회원가입 완료 <ArrowRight className="ml-2 w-5 h-5 md:w-6 md:h-6" />
+              {isSigningUp ? "가입 처리 중..." : "회원가입 완료"} <ArrowRight className="ml-2 w-5 h-5 md:w-6 md:h-6" />
             </Button>
           </form>
         </div>
       </motion.div>
     </div>
+  );
+};
+
+// ✨ [2026-09-30] 디스코드 사용자명이 어디 있는지 알려주는 도움말 — 디스코드 앱의 내 프로필 팝업과 비슷한 카드에서
+// 이름 아래의 작은 글씨(사용자명)를 짚어준다. 예시 계정은 가짜 이름.
+const DiscordUsernameHelp = () => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <span ref={wrapRef} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="디스코드 사용자명 찾는 법"
+        aria-expanded={open}
+        className={`w-5 h-5 md:w-6 md:h-6 rounded-full text-[11px] md:text-xs font-bold flex items-center justify-center transition-colors ${
+          open ? "bg-[#5865F2] text-white" : "bg-[#E5E5EA] text-[#6E6E73] hover:bg-[#D1D1D6]"
+        }`}
+      >
+        ?
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.97 }}
+            transition={{ duration: 0.16 }}
+            className="absolute left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 top-8 z-50 w-[290px] font-normal"
+          >
+            <div className="rounded-2xl overflow-hidden bg-[#111214] shadow-[0_12px_40px_rgb(0_0_0/0.35)] border border-white/10 text-left">
+              {/* 배너 + 아바타 */}
+              <div className="h-14 bg-[#4E5D3A]" />
+              <div className="px-4 pb-4">
+                <div className="-mt-8 mb-2 w-16 h-16 rounded-full bg-[#111214] p-1">
+                  <div className="w-full h-full rounded-full bg-gradient-to-br from-[#57F287] to-[#2D7D46] flex items-center justify-center text-white text-lg font-bold">김</div>
+                </div>
+                <p className="text-white text-lg font-bold leading-tight">김데브</p>
+                <div className="relative mt-0.5 inline-flex items-center">
+                  <span className="text-[#DBDEE1] text-[13px] px-1.5 -mx-1.5 py-0.5 rounded-md ring-2 ring-[#FEE75C] bg-[#FEE75C]/10">devsign_user</span>
+                  <span className="ml-2 flex items-center gap-1 text-[#FEE75C] text-[11px] font-bold whitespace-nowrap">
+                    ← 이게 사용자명
+                  </span>
+                </div>
+                <div className="mt-3 rounded-xl bg-[#1E1F22] divide-y divide-white/5 text-[12px] text-[#B5BAC1]">
+                  <div className="px-3 py-2">프로필 편집</div>
+                  <div className="px-3 py-2">사용자 ID 복사하기</div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 rounded-xl bg-white border border-black/5 shadow-[0_4px_16px_rgb(0_0_0/0.08)] px-3.5 py-3 text-[12px] leading-relaxed text-[#1D1D1F] text-left">
+              디스코드 앱에서 <b>왼쪽 아래 내 프로필 사진</b>을 누르면 이 화면이 떠요.
+              굵은 이름 <b>아래의 작은 글씨</b>가 사용자명이에요. <span className="text-[#6E6E73]">(@ 없이 그대로 입력)</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </span>
   );
 };

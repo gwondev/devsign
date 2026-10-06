@@ -4,6 +4,7 @@ import jakarta.annotation.PostConstruct; // ✨ 추가: 서버 켜질 때 자동
 import jakarta.persistence.EntityManager; // ✨ 추가: DB 데이터를 직접 안전하게 수정하기 위한 도구
 import jakarta.transaction.Transactional;
 import kr.co.devsign.devsign_backend.dto.admin.AccessLogResponse;
+import kr.co.devsign.devsign_backend.dto.admin.AdminDiscordCheckResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminMemberResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminPasswordVerifyRequest;
 import kr.co.devsign.devsign_backend.dto.admin.AdminPeriodResponse;
@@ -12,17 +13,34 @@ import kr.co.devsign.devsign_backend.dto.admin.AdminPeriodSubmissionResponse;
 import kr.co.devsign.devsign_backend.dto.admin.AdminPeriodZipRequest;
 import kr.co.devsign.devsign_backend.dto.admin.HeroSettingsRequest;
 import kr.co.devsign.devsign_backend.dto.admin.HeroSettingsResponse;
+import kr.co.devsign.devsign_backend.dto.admin.NotifyMembersRequest;
+import kr.co.devsign.devsign_backend.dto.admin.NotifyMembersResponse;
+import kr.co.devsign.devsign_backend.dto.admin.NotifyResultItem;
+import kr.co.devsign.devsign_backend.dto.admin.DiscordCheckResponse;
 import kr.co.devsign.devsign_backend.dto.admin.RestoreMemberRequest;
+import kr.co.devsign.devsign_backend.dto.admin.RosterCheckResponse;
 import kr.co.devsign.devsign_backend.dto.admin.SyncDiscordResponse;
 import kr.co.devsign.devsign_backend.dto.common.StatusResponse;
 import kr.co.devsign.devsign_backend.entity.AssemblyPeriod;
+import kr.co.devsign.devsign_backend.entity.AssemblyProject;
 import kr.co.devsign.devsign_backend.entity.AssemblyReport;
 import kr.co.devsign.devsign_backend.entity.Member;
+import kr.co.devsign.devsign_backend.entity.TeamMember;
+import kr.co.devsign.devsign_backend.entity.TeamSubmission;
 import kr.co.devsign.devsign_backend.repository.AccessLogRepository;
 import kr.co.devsign.devsign_backend.repository.AssemblyPeriodRepository;
+import kr.co.devsign.devsign_backend.repository.AssemblyProjectRepository;
 import kr.co.devsign.devsign_backend.repository.AssemblyReportRepository;
 import kr.co.devsign.devsign_backend.repository.MemberRepository;
+import kr.co.devsign.devsign_backend.repository.TeamMemberRepository;
+import kr.co.devsign.devsign_backend.repository.TeamSubmissionRepository;
 import lombok.RequiredArgsConstructor;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -31,19 +49,26 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties; // ✨ 추가: 자바 내장 설정 파일 도구
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -58,6 +83,10 @@ public class AdminService {
     private final AccessLogRepository accessLogRepository;
     private final AssemblyPeriodRepository assemblyPeriodRepository;
     private final AssemblyReportRepository assemblyReportRepository;
+    private final AssemblyProjectRepository assemblyProjectRepository;
+    private final kr.co.devsign.devsign_backend.util.PlanPdfGenerator planPdfGenerator;
+    private final TeamMemberRepository teamMemberRepository;
+    private final TeamSubmissionRepository teamSubmissionRepository;
     private final AccessLogService accessLogService;
     private final DiscordBotClient discordBotClient;
     private final BCryptPasswordEncoder passwordEncoder;
@@ -73,6 +102,11 @@ public class AdminService {
     static {
         heroSettings.put("recruitmentText", "2026 recruitment open");
         heroSettings.put("applyLink", "https://open.kakao.com/o/example");
+        heroSettings.put("applyButtonText", "지원하기");
+        // ✨ [신규] 홈 화면 하단 연락처 전화번호 기본값(기존에 프론트에 하드코딩돼 있던 값 그대로)
+        heroSettings.put("presidentPhone", "010-9171-8162");
+        heroSettings.put("vicePresidentPhone", "010-6545-1948");
+        heroSettings.put("treasurerPhone", "010-8639-5557");
     }
 
     // ✨ 핵심 3: 서버가 켜질 때마다 안전한 uploads 폴더에서 설정 파일을 읽어옵니다.
@@ -93,6 +127,18 @@ public class AdminService {
                     }
                     if (props.containsKey("applyLink")) {
                         heroSettings.put("applyLink", props.getProperty("applyLink"));
+                    }
+                    if (props.containsKey("applyButtonText")) {
+                        heroSettings.put("applyButtonText", props.getProperty("applyButtonText"));
+                    }
+                    if (props.containsKey("presidentPhone")) {
+                        heroSettings.put("presidentPhone", props.getProperty("presidentPhone"));
+                    }
+                    if (props.containsKey("vicePresidentPhone")) {
+                        heroSettings.put("vicePresidentPhone", props.getProperty("vicePresidentPhone"));
+                    }
+                    if (props.containsKey("treasurerPhone")) {
+                        heroSettings.put("treasurerPhone", props.getProperty("treasurerPhone"));
                     }
                 }
             }
@@ -127,13 +173,33 @@ public class AdminService {
     }
 
     public HeroSettingsResponse getHeroSettings() {
-        return new HeroSettingsResponse(heroSettings.get("recruitmentText"), heroSettings.get("applyLink"));
+        return new HeroSettingsResponse(
+                heroSettings.get("recruitmentText"),
+                heroSettings.get("applyLink"),
+                heroSettings.get("applyButtonText"),
+                heroSettings.get("presidentPhone"),
+                heroSettings.get("vicePresidentPhone"),
+                heroSettings.get("treasurerPhone")
+        );
     }
 
     public StatusResponse updateHeroSettings(HeroSettingsRequest settings) {
         heroSettings.put("recruitmentText", settings.recruitmentText());
         heroSettings.put("applyLink", settings.applyLink());
-        
+        // ConcurrentHashMap은 null 값을 허용하지 않으므로, 혹시 프론트에서 값이 안 왔다면 기본값 유지
+        if (settings.applyButtonText() != null && !settings.applyButtonText().isBlank()) {
+            heroSettings.put("applyButtonText", settings.applyButtonText());
+        }
+        if (settings.presidentPhone() != null && !settings.presidentPhone().isBlank()) {
+            heroSettings.put("presidentPhone", settings.presidentPhone());
+        }
+        if (settings.vicePresidentPhone() != null && !settings.vicePresidentPhone().isBlank()) {
+            heroSettings.put("vicePresidentPhone", settings.vicePresidentPhone());
+        }
+        if (settings.treasurerPhone() != null && !settings.treasurerPhone().isBlank()) {
+            heroSettings.put("treasurerPhone", settings.treasurerPhone());
+        }
+
         // ✨ 핵심 4: 메모리가 아닌 도커 볼륨(uploads 폴더)의 실제 파일에 영구 저장합니다.
         try {
             File uploadDir = getUploadBasePath().toFile();
@@ -177,8 +243,9 @@ public class AdminService {
                             ? period.getEndDate()
                             : LocalDate.of(year, month, 28);
 
-                    long submittedCount = assemblyReportRepository
-                            .countByYearAndSemesterAndMonthAndStatus(year, semester, month, SUBMITTED);
+                    // ✨ [2026-09-04] 개인 제출 또는 팀 공유 자료 제출, 둘 중 하나라도 있으면 제출한
+                    // 것으로 집계 — 팀에 속한 인원이 팀 자료로만 제출해도 인원수에 정확히 반영되도록
+                    long submittedCount = countUniqueSubmitted(year, semester, month);
 
                     return new AdminPeriodResponse(
                             period != null ? period.getId() : null,
@@ -234,29 +301,88 @@ public class AdminService {
         }
     }
 
+    // ✨ [2026-09-04 재구성] 개인 제출과 팀 공유 자료 제출이 완전히 분리된 이후의 관리자 화면 로직.
+    // 팀이 그 달에 제출했으면 팀원 전원에게 "팀 자료" 행을 하나씩 만들어서 기존 프론트의
+    // teamId 기준 그룹핑(공동제출 N명 표시)이 그대로 재사용되게 하고, 그와는 별개로 개인이
+    // 직접 제출한 게 있으면(팀 소속 여부와 무관하게) 그 사람만의 개인 행을 추가로 만든다.
+    // 즉 팀만 제출 -> 팀 행만, 개인만 제출 -> 개인 행만, 둘 다 제출 -> 두 행 모두 노출.
     public List<AdminPeriodSubmissionResponse> getSubmittedMembers(int year, int semester, int month) {
+        List<AdminPeriodSubmissionResponse> result = new ArrayList<>();
+
+        List<TeamSubmission> teamSubs = teamSubmissionRepository.findByYearAndSemesterAndMonthAndStatus(year, semester, month, SUBMITTED);
+        for (TeamSubmission ts : teamSubs) {
+            List<TeamMember> members = teamMemberRepository.findByTeam_IdAndStatus(ts.getTeam().getId(), "ACCEPTED");
+            for (TeamMember tm : members) {
+                Optional<Member> member = memberRepository.findByLoginId(tm.getLoginId());
+                String name = member.map(Member::getName).orElse(tm.getLoginId());
+                String studentId = member.map(Member::getStudentId).orElse("");
+
+                result.add(new AdminPeriodSubmissionResponse(
+                        tm.getLoginId(),
+                        name,
+                        studentId,
+                        ts.getDate(),
+                        ts.getPresentationPath(),
+                        ts.getPdfPath(),
+                        ts.getOtherPath(),
+                        ts.getMemo(),
+                        ts.getTeam().getId(),
+                        ts.getTeam().getTeamName()
+                ));
+            }
+        }
+
         List<AssemblyReport> reports = assemblyReportRepository
                 .findByYearAndSemesterAndMonthAndStatusOrderByIdDesc(year, semester, month, SUBMITTED);
+        for (AssemblyReport report : reports) {
+            Optional<Member> member = memberRepository.findByLoginId(report.getLoginId());
+            String name = member.map(Member::getName).orElse(report.getLoginId());
+            String studentId = member.map(Member::getStudentId).orElse("");
 
-        return reports.stream()
-                .map(report -> {
-                    Optional<Member> member = memberRepository.findByLoginId(report.getLoginId());
-                    String name = member.map(Member::getName).orElse(report.getLoginId());
-                    String studentId = member.map(Member::getStudentId).orElse("");
-                    return new AdminPeriodSubmissionResponse(
-                            report.getLoginId(),
-                            name,
-                            studentId,
-                            report.getDate(),
-                            report.getPresentationPath(),
-                            report.getPdfPath(),
-                            report.getOtherPath(),
-                            report.getMemo()
-                    );
-                })
+            // ✨ 개인 제출은 팀 소속 여부와 무관하게 항상 별도 행(teamId=null) — 팀 자료와
+            // 섞여서 그룹핑되면 안 되므로 여기서는 절대 teamId를 채우지 않는다.
+            result.add(new AdminPeriodSubmissionResponse(
+                    report.getLoginId(),
+                    name,
+                    studentId,
+                    report.getDate(),
+                    report.getPresentationPath(),
+                    report.getPdfPath(),
+                    report.getOtherPath(),
+                    report.getMemo(),
+                    null,
+                    null
+            ));
+        }
+
+        return result;
+    }
+
+    // ✨ [2026-09-04 신규] 개인 제출 또는 팀 제출, 둘 중 하나라도 있으면 제출한 것으로 집계한
+    // 고유 인원 수(loginId 기준 중복 제거)
+    private long countUniqueSubmitted(int year, int semester, int month) {
+        Set<String> loginIds = new HashSet<>();
+        assemblyReportRepository.findByYearAndSemesterAndMonthAndStatusOrderByIdDesc(year, semester, month, SUBMITTED)
+                .forEach(r -> loginIds.add(r.getLoginId()));
+        teamSubmissionRepository.findByYearAndSemesterAndMonthAndStatus(year, semester, month, SUBMITTED)
+                .forEach(ts -> teamMemberRepository.findByTeam_IdAndStatus(ts.getTeam().getId(), "ACCEPTED")
+                        .forEach(tm -> loginIds.add(tm.getLoginId())));
+        return loginIds.size();
+    }
+
+    // ✨ loginId가 해당 연도/학기에 속한 ACCEPTED 팀 멤버십을 찾는다 (팀 없으면 empty)
+    // ✨ [2026-09-21 수정] 한 명이 한 학기에 여러 팀에 속할 수 있게 되면서, 첫 번째 팀만 찾던 것을
+    // 속한 팀 전부를 돌려주도록 변경 (ZIP에 그 사람이 속한 모든 팀의 공유 자료가 담기도록)
+    private List<TeamMember> findAcceptedTeamMemberships(String loginId, int year, int semester) {
+        return teamMemberRepository.findByLoginIdAndTeam_YearAndTeam_Semester(loginId, year, semester).stream()
+                .filter(m -> "ACCEPTED".equals(m.getStatus()))
                 .toList();
     }
 
+    // ✨ [2026-09-04 재구성] 개인 제출과 팀 공유 자료가 분리된 이후의 ZIP 다운로드.
+    // 요청된 인원의 개인 제출 자료는 "(개인)" 폴더로, 그 인원이 속한 팀의 공유 자료가 그 달에
+    // 제출되어 있으면 "(팀 공유자료)" 폴더로 별도 담는다 — 같은 팀에 요청 인원이 여러 명이어도
+    // 팀 폴더는 한 번만 담는다(중복 방지).
     public ResponseEntity<byte[]> downloadPeriodZip(AdminPeriodZipRequest request) {
         if (request == null || request.year() == null || request.month() == null
                 || request.userIds() == null || request.userIds().isEmpty()) {
@@ -264,45 +390,53 @@ public class AdminService {
         }
 
         String fileType = normalizeFileType(request.fileType());
-        List<AssemblyReport> reports = assemblyReportRepository.findByLoginIdInAndYearAndMonthAndStatus(
+        int semester = request.month() <= 6 ? 1 : 2;
+
+        List<AssemblyReport> individualReports = assemblyReportRepository.findByLoginIdInAndYearAndMonthAndStatus(
                 request.userIds(),
                 request.year(),
                 request.month(),
                 SUBMITTED
         );
 
+        Set<Long> teamIdsToInclude = new LinkedHashSet<>();
+        for (String loginId : request.userIds()) {
+            for (TeamMember m : findAcceptedTeamMemberships(loginId, request.year(), semester)) {
+                teamIdsToInclude.add(m.getTeam().getId());
+            }
+        }
+        List<TeamSubmission> teamSubs = new ArrayList<>();
+        for (Long teamId : teamIdsToInclude) {
+            teamSubmissionRepository.findByTeam_IdAndYearAndSemesterOrderByMonthAsc(teamId, request.year(), semester).stream()
+                    .filter(ts -> ts.getMonth() == request.month() && SUBMITTED.equals(ts.getStatus()))
+                    .findFirst()
+                    .ifPresent(teamSubs::add);
+        }
+
         try (ByteArrayOutputStream buffer = new ByteArrayOutputStream();
              ZipOutputStream zipOut = new ZipOutputStream(buffer)) {
 
-            for (AssemblyReport report : reports) {
-                boolean includePresentation = "all".equals(fileType) || "ppt".equals(fileType);
-                boolean includePdf = "all".equals(fileType) || "pdf".equals(fileType);
-                boolean includeOther = "all".equals(fileType);
+            boolean includePresentation = "all".equals(fileType) || "ppt".equals(fileType);
+            boolean includePdf = "all".equals(fileType) || "pdf".equals(fileType);
+            boolean includeOther = "all".equals(fileType);
 
-                addFileToZip(
-                        zipOut,
-                        report.getLoginId(),
-                        "presentation",
-                        report.getPresentationPath(),
-                        includePresentation,
-                        Set.of("ppt", "pptx")
-                );
-                addFileToZip(
-                        zipOut,
-                        report.getLoginId(),
-                        "pdf",
-                        report.getPdfPath(),
-                        includePdf,
-                        Set.of("pdf")
-                );
-                addFileToZip(
-                        zipOut,
-                        report.getLoginId(),
-                        "other",
-                        report.getOtherPath(),
-                        includeOther,
-                        Collections.emptySet()
-                );
+            for (AssemblyReport report : individualReports) {
+                String folderName = buildMemberFolderName(report.getLoginId()) + " (개인)";
+                addFileToZip(zipOut, folderName, report.getPresentationPath(), includePresentation, Set.of("ppt", "pptx"));
+                addFileToZip(zipOut, folderName, report.getPdfPath(), includePdf, Set.of("pdf"));
+                addFileToZip(zipOut, folderName, report.getOtherPath(), includeOther, Collections.emptySet());
+                addPlanPdfToZip(zipOut, folderName, report, includePdf);
+                addPlanFileToZip(zipOut, folderName, report.getPlanFilePath(), includeOther, includePdf, includePresentation);
+            }
+
+            for (TeamSubmission ts : teamSubs) {
+                String teamName = StringUtils.hasText(ts.getTeam().getTeamName()) ? ts.getTeam().getTeamName() : "팀 프로젝트";
+                String folderName = teamName + " (팀 공유자료)";
+                addFileToZip(zipOut, folderName, ts.getPresentationPath(), includePresentation, Set.of("ppt", "pptx"));
+                addFileToZip(zipOut, folderName, ts.getPdfPath(), includePdf, Set.of("pdf"));
+                addFileToZip(zipOut, folderName, ts.getOtherPath(), includeOther, Collections.emptySet());
+                addTeamPlanPdfToZip(zipOut, folderName, ts, includePdf);
+                addPlanFileToZip(zipOut, folderName, ts.getPlanFilePath(), includeOther, includePdf, includePresentation);
             }
 
             zipOut.finish();
@@ -351,6 +485,365 @@ public class AdminService {
         } catch (Exception e) {
             return new SyncDiscordResponse("error", "sync error: " + e.getMessage());
         }
+    }
+
+    // ✨ [신규] 선택한 회원들에게 디스코드 DM으로 동일한 안내 메시지를 일괄 발송 (예: 총회자료 제출 리마인드)
+    @SuppressWarnings("unchecked")
+    public NotifyMembersResponse notifyMembers(NotifyMembersRequest request) {
+        if (request == null || request.loginIds() == null || request.loginIds().isEmpty()) {
+            throw new IllegalArgumentException("보낼 대상을 선택해주세요.");
+        }
+        if (!StringUtils.hasText(request.message())) {
+            throw new IllegalArgumentException("보낼 메시지를 입력해주세요.");
+        }
+
+        List<NotifyResultItem> results = new ArrayList<>();
+        List<String> discordTags = new ArrayList<>();
+        Map<String, Member> tagToMember = new HashMap<>();
+
+        for (String loginId : request.loginIds()) {
+            Optional<Member> memberOpt = memberRepository.findByLoginId(loginId);
+            if (memberOpt.isEmpty()) {
+                results.add(new NotifyResultItem(loginId, loginId, "error", "존재하지 않는 회원입니다."));
+                continue;
+            }
+            Member member = memberOpt.get();
+            if (!StringUtils.hasText(member.getDiscordTag())) {
+                results.add(new NotifyResultItem(loginId, member.getName(), "no_discord", "디스코드 연동 정보가 없습니다."));
+                continue;
+            }
+            discordTags.add(member.getDiscordTag());
+            tagToMember.put(member.getDiscordTag(), member);
+        }
+
+        if (!discordTags.isEmpty()) {
+            try {
+                Map<String, Object> botResponse = discordBotClient.sendBulkMessage(discordTags, request.message());
+                List<Map<String, Object>> botResults = botResponse != null
+                        ? (List<Map<String, Object>>) botResponse.getOrDefault("results", List.of())
+                        : List.of();
+
+                for (Map<String, Object> item : botResults) {
+                    String tag = String.valueOf(item.get("discordTag"));
+                    String status = String.valueOf(item.get("status"));
+                    Member member = tagToMember.get(tag);
+                    String loginId = member != null ? member.getLoginId() : tag;
+                    String name = member != null ? member.getName() : tag;
+                    String message = item.get("message") != null ? String.valueOf(item.get("message")) : null;
+                    results.add(new NotifyResultItem(loginId, name, status, message));
+                }
+            } catch (Exception e) {
+                for (Member member : tagToMember.values()) {
+                    results.add(new NotifyResultItem(member.getLoginId(), member.getName(), "error", "봇 서버 통신 오류: " + e.getMessage()));
+                }
+            }
+        }
+
+        int successCount = (int) results.stream().filter(r -> "success".equals(r.status())).count();
+        int failCount = results.size() - successCount;
+
+        return new NotifyMembersResponse(successCount, failCount, results);
+    }
+
+    // 디스코드에는 있지만 웹사이트에는 아직 가입하지 않은 사람을 뽑을 때 대상으로 삼는 userStatus.
+    // 순서 그대로 응답에 반영되어 재학생 -> 신입생 -> 휴학생 순으로 표시된다.
+    // ✨ [2026-09-14 수정] 신입생이 빠져 있어서 새로 들어온 신입생 미가입자가 안 보이던 문제 수정.
+    private static final List<String> UNREGISTERED_TARGET_STATUSES = List.of("재학생", "신입생", "휴학생");
+
+    // ✨ [신규] 웹사이트에 등록된 회원들이 실제로 동아리 디스코드 서버에 남아있는지 확인
+    // (탈퇴자 파악 → 관리자가 수동으로 계정 삭제할 때 참고용) + [2026-09-08 추가] 반대로 디스코드에는
+    // 있지만(재학생/휴학생만 대상) 웹사이트에는 아직 가입하지 않은 사람도 함께 내려줌(가입 독려용)
+    @SuppressWarnings("unchecked")
+    public DiscordCheckResponse checkDiscordMembership() {
+        Map<String, Object> botRes = discordBotClient.syncAllMembers();
+        if (botRes == null || !"success".equals(botRes.get("status"))) {
+            throw new IllegalStateException("디스코드 봇 서버와 통신할 수 없습니다.");
+        }
+
+        List<Map<String, String>> guildMembers = (List<Map<String, String>>) botRes.getOrDefault("members", List.of());
+        Set<String> guildTags = new HashSet<>();
+        for (Map<String, String> d : guildMembers) {
+            String tag = d.get("discordTag");
+            if (StringUtils.hasText(tag)) {
+                guildTags.add(tag);
+            }
+        }
+
+        List<Member> dbMembers = memberRepository.findByDeletedFalseOrderByStudentIdDesc();
+        Set<String> dbTags = new HashSet<>();
+        for (Member m : dbMembers) {
+            if (StringUtils.hasText(m.getDiscordTag())) {
+                dbTags.add(m.getDiscordTag());
+            }
+        }
+
+        List<AdminDiscordCheckResponse> members = dbMembers.stream()
+                .map(m -> new AdminDiscordCheckResponse(
+                        m.getId(),
+                        m.getLoginId(),
+                        m.getName(),
+                        m.getStudentId(),
+                        m.getDiscordTag(),
+                        m.getUserStatus(),
+                        m.getRole(),
+                        StringUtils.hasText(m.getDiscordTag()) && guildTags.contains(m.getDiscordTag()),
+                        m.isDeparted()
+                ))
+                .toList();
+
+        Map<String, List<DiscordCheckResponse.UnregisteredGuildMemberResponse>> unregistered = new LinkedHashMap<>();
+        for (String status : UNREGISTERED_TARGET_STATUSES) {
+            unregistered.put(status, new ArrayList<>());
+        }
+        for (Map<String, String> d : guildMembers) {
+            String status = d.get("userStatus");
+            String tag = d.get("discordTag");
+            if (!UNREGISTERED_TARGET_STATUSES.contains(status)) continue;
+            if (StringUtils.hasText(tag) && dbTags.contains(tag)) continue;
+            unregistered.get(status).add(new DiscordCheckResponse.UnregisteredGuildMemberResponse(
+                    d.get("studentId") + " " + d.get("name"), tag
+            ));
+        }
+
+        return new DiscordCheckResponse(members, unregistered);
+    }
+
+    // ✨ [2026-09-08 신규] "명단 대조" — 엑셀로 올린 부원 명부와 실제 디스코드 서버 멤버를 대조해서
+    // 서로 다른 부분을 찾아준다. 원래는 bot/member_check/ 아래에 있던 로컬 전용 도구(자체 디스코드
+    // 봇 토큰으로 직접 접속)였는데, 이미 떠 있는 동아리 웹봇(discord-bot 서비스)의 sync-all-members를
+    // 그대로 재사용해서 웹 관리자 화면 기능으로 옮긴 것 — 새로 봇을 띄우거나 토큰을 따로 관리할 필요가 없다.
+    //
+    // 매칭 방식: 디스코드 닉네임이 "22 김형민"처럼 "학번앞2자리 이름" 형식인 걸 이용해서, 엑셀 행의
+    // 학번+이름으로 같은 키를 만들어 대조한다(로컬 도구와 동일한 방식). 다만 로컬 도구는 디스코드
+    // 역할을 통째로 받아와 판단했던 반면, 웹봇의 sync-all-members는 역할들을 우선순위 하나로 압축한
+    // userStatus만 주므로(LAB>재학생>휴학생>졸업생>신입생>일반), 신입생 역할을 겸한 재학생이 "재학생"이
+    // 아닌 "신입생" 그룹으로만 잡히는 정도의 차이가 있을 수 있음(요청자 확인 후 감안하고 진행하기로 함).
+    @SuppressWarnings("unchecked")
+    public RosterCheckResponse checkRoster(MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("업로드된 파일이 없습니다.");
+        }
+
+        Map<String, Object> botRes = discordBotClient.syncAllMembers();
+        if (botRes == null || !"success".equals(botRes.get("status"))) {
+            throw new IllegalStateException("디스코드 봇 서버와 통신할 수 없습니다.");
+        }
+        List<Map<String, String>> guildMembers = (List<Map<String, String>>) botRes.getOrDefault("members", List.of());
+
+        // 매칭 키: "학번식별자 정규화된이름" (예: "22 김형민")
+        Map<String, Map<String, String>> guildByKey = new LinkedHashMap<>();
+        for (Map<String, String> m : guildMembers) {
+            String key = m.get("studentId") + " " + normalizeRosterName(m.get("name"));
+            guildByKey.put(key, m);
+        }
+
+        List<Map<String, String>> rows = readRosterRows(file);
+
+        Map<String, List<RosterCheckResponse.FileOnlyEntry>> fileNotInDiscord = new LinkedHashMap<>();
+        List<RosterCheckResponse.IdChangedEntry> idChanged = new ArrayList<>();
+        List<RosterCheckResponse.StatusMismatchEntry> statusMismatch = new ArrayList<>();
+        List<RosterCheckResponse.UnmatchedRowEntry> unmatchedRows = new ArrayList<>();
+        Set<String> matchedGuildKeys = new HashSet<>();
+
+        for (Map<String, String> row : rows) {
+            String name = row.getOrDefault("이름", "").trim();
+            String rawStatus = row.getOrDefault("상태", "").trim();
+            String status = StringUtils.hasText(rawStatus) ? rawStatus : "미상";
+            String studentIdRaw = row.getOrDefault("학번", "");
+            String fileId = row.getOrDefault("아이디", "").trim();
+
+            String year2 = deriveRosterAdmissionYear2(studentIdRaw);
+            if (year2 == null || !StringUtils.hasText(name)) {
+                unmatchedRows.add(new RosterCheckResponse.UnmatchedRowEntry(name, studentIdRaw, "학번/이름 형식을 해석할 수 없음"));
+                continue;
+            }
+
+            String expectedNickname = year2 + " " + name;
+            String key = year2 + " " + normalizeRosterName(name);
+            Map<String, String> member = guildByKey.get(key);
+
+            if (member == null) {
+                fileNotInDiscord.computeIfAbsent(status, k -> new ArrayList<>())
+                        .add(new RosterCheckResponse.FileOnlyEntry(name, studentIdRaw, expectedNickname));
+                continue;
+            }
+
+            matchedGuildKeys.add(key);
+            String discordUsername = member.getOrDefault("discordTag", "");
+            if (!fileId.equals(discordUsername.trim())) {
+                idChanged.add(new RosterCheckResponse.IdChangedEntry(
+                        name, studentIdRaw, fileId, discordUsername,
+                        member.get("studentId") + " " + member.get("name")
+                ));
+            }
+
+            Set<String> expectedGuildStatuses = ROSTER_STATUS_TO_GUILD_STATUS.get(normalizeRosterStatus(status));
+            if (expectedGuildStatuses != null && !expectedGuildStatuses.contains(member.get("userStatus"))) {
+                statusMismatch.add(new RosterCheckResponse.StatusMismatchEntry(
+                        name, studentIdRaw, status,
+                        String.join(" 또는 ", expectedGuildStatuses),
+                        member.get("userStatus")
+                ));
+            }
+        }
+
+        // 디스코드에 재학생/휴학생/LAB 상태로 있는데 파일에서는 매칭되지 않은 사람 (파일에 추가해야 할 대상)
+        Map<String, List<RosterCheckResponse.DiscordOnlyEntry>> discordNotInFile = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, String>> entry : guildByKey.entrySet()) {
+            if (matchedGuildKeys.contains(entry.getKey())) {
+                continue;
+            }
+            Map<String, String> member = entry.getValue();
+            String status = member.get("userStatus");
+            if (TARGET_GUILD_STATUSES.contains(status)) {
+                discordNotInFile.computeIfAbsent(status, k -> new ArrayList<>())
+                        .add(new RosterCheckResponse.DiscordOnlyEntry(
+                                member.get("studentId") + " " + member.get("name"),
+                                member.get("discordTag")
+                        ));
+            }
+        }
+
+        return new RosterCheckResponse(
+                discordNotInFile, fileNotInDiscord, idChanged, statusMismatch, unmatchedRows,
+                guildMembers.size(), rows.size()
+        );
+    }
+
+    private static final Set<String> REQUIRED_ROSTER_COLUMNS = Set.of("이름", "아이디", "학번", "상태");
+    // 디스코드에 있는데 파일에 없는 사람을 뽑을 때 대상으로 삼는 userStatus (졸업생/일반은 제외).
+    // ✨ [2026-09-14 수정] 신입생이 빠져 있어서, 디스코드에 새로 들어온 신입생이 파일에 없어도
+    // 아예 보고되지 않는 문제가 있었다(웹봇은 역할을 하나로 압축하므로 신입생이 "재학생"으로
+    // 잡히지 않는다). 신입생을 대상에 추가.
+    private static final List<String> TARGET_GUILD_STATUSES = List.of("재학생", "신입생", "휴학생", "LAB");
+    // 엑셀 "상태" 값 -> 대응하는 디스코드 userStatus(들). 매핑에 없는 값은 상태 불일치 검사에서 건너뜀.
+    // 키는 "생"을 뗀 형태로 두고, 파일에 "재학생"처럼 적혀 있어도 인식되게 normalizeRosterStatus()에서 처리.
+    private static final Map<String, Set<String>> ROSTER_STATUS_TO_GUILD_STATUS = Map.of(
+            "재학", Set.of("재학생", "신입생"),
+            "신입", Set.of("신입생", "재학생"),
+            "휴학", Set.of("휴학생"),
+            "대학원", Set.of("LAB"),
+            "LAB", Set.of("LAB"),
+            "졸업", Set.of("졸업생")
+    );
+
+    // ✨ [2026-09-14 추가] 파일의 상태값이 "재학생"처럼 "생"까지 붙어 있어도 매핑되도록 정규화.
+    // 예전에는 "재학"/"휴학"만 인식해서, "재학생"이라고 적힌 파일은 상태 불일치 검사가 통째로 건너뛰어졌다.
+    private String normalizeRosterStatus(String status) {
+        String s = status == null ? "" : status.trim();
+        if (s.length() > 1 && s.endsWith("생")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+
+    // 닉네임 끝의 "(회장)" 같은 괄호 표기와 공백을 제거해서 비교용으로 정규화
+    private String normalizeRosterName(String name) {
+        if (name == null) return "";
+        return name.replaceAll("\\(.*?\\)\\s*$", "").trim();
+    }
+
+    // 엑셀 "학번" 컬럼에서 닉네임에 쓰이는 학번 토큰을 뽑는다.
+    // ✨ [2026-09-14 보완] 예전에는 8자리 같은 "4자리 이상 숫자"만 처리해서,
+    //  - 파일에 학번이 "24"처럼 2자리로만 적혀 있거나
+    //  - 대학원/졸업생처럼 닉네임 토큰이 "LAB"/"g20"인 경우
+    // 전부 "형식을 해석할 수 없음"으로 빠졌다. 두 경우 모두 인식하도록 보완.
+    private String deriveRosterAdmissionYear2(String raw) {
+        if (!StringUtils.hasText(raw)) return null;
+        String trimmed = raw.trim();
+        try {
+            String digits = String.valueOf(Long.parseLong(trimmed));
+            if (digits.length() == 2) return digits;                 // 이미 2자리 (예: 24)
+            return digits.length() >= 4 ? digits.substring(2, 4) : null;  // 8자리 등 (예: 20243106 -> 24)
+        } catch (NumberFormatException e) {
+            // 숫자가 아니면 닉네임 토큰을 그대로 쓴 것으로 본다 (예: LAB 김어진, g20 남의진)
+            return trimmed.length() <= 4 && !trimmed.contains(" ") ? trimmed : null;
+        }
+    }
+
+    // 업로드된 xlsx를 읽어 "이름/아이디/학번/상태" 컬럼만 골라 행 단위 Map으로 변환.
+    // 완전히 빈 행은 건너뛴다. DataFormatter를 써서 숫자 셀(예: 학번)도 항상 문자열로 안전하게 읽는다.
+    private List<Map<String, String>> readRosterRows(MultipartFile file) throws IOException {
+        try (InputStream in = file.getInputStream(); Workbook workbook = new XSSFWorkbook(in)) {
+            Sheet sheet = workbook.getSheetAt(0);
+            DataFormatter formatter = new DataFormatter();
+
+            Row headerRow = sheet.getRow(sheet.getFirstRowNum());
+            if (headerRow == null) {
+                throw new IllegalArgumentException("엑셀 파일에 헤더 행이 없습니다.");
+            }
+            Map<String, Integer> columnIndex = new HashMap<>();
+            for (Cell cell : headerRow) {
+                String header = formatter.formatCellValue(cell).trim();
+                if (StringUtils.hasText(header)) {
+                    columnIndex.put(header, cell.getColumnIndex());
+                }
+            }
+
+            Set<String> missing = new LinkedHashSet<>(REQUIRED_ROSTER_COLUMNS);
+            missing.removeAll(columnIndex.keySet());
+            if (!missing.isEmpty()) {
+                throw new IllegalArgumentException("엑셀에 다음 컬럼이 없습니다: " + String.join(", ", missing));
+            }
+
+            List<Map<String, String>> rows = new ArrayList<>();
+            for (int r = headerRow.getRowNum() + 1; r <= sheet.getLastRowNum(); r++) {
+                Row row = sheet.getRow(r);
+                if (row == null) continue;
+
+                Map<String, String> values = new HashMap<>();
+                boolean allBlank = true;
+                for (Map.Entry<String, Integer> entry : columnIndex.entrySet()) {
+                    Cell cell = row.getCell(entry.getValue());
+                    String value = cell == null ? "" : formatter.formatCellValue(cell).trim();
+                    values.put(entry.getKey(), value);
+                    if (StringUtils.hasText(value)) {
+                        allBlank = false;
+                    }
+                }
+                if (!allBlank) {
+                    rows.add(values);
+                }
+            }
+            return rows;
+        }
+    }
+
+    // ✨ [2026-09-08 추가] "디스코드에서 나간 것으로 추정" 목록에서 계정을 삭제하는 대신, 나간
+    // 인원으로만 표시해두는 가역적인 액션. suspended(로그인 차단)와 달리 로그인은 그대로 가능하고,
+    // deleted(소프트 삭제)와 달리 관리자 화면 등 다른 곳에는 전혀 영향 없음 — 오직 커뮤니티 목록
+    // 노출 여부에만 관여(프론트 필터, MemberResponse.departed 참고). 다시 누르면 해제됨.
+    public StatusResponse toggleDeparted(Long id, String ip) {
+        return memberRepository.findById(id)
+                .map(m -> {
+                    m.setDeparted(!m.isDeparted());
+                    m.setDepartedAt(m.isDeparted() ? java.time.LocalDateTime.now() : null);
+                    memberRepository.save(m);
+
+                    accessLogService.logByMember(
+                            m,
+                            m.isDeparted() ? "MEMBER_DEPARTED" : "MEMBER_DEPARTED_UNDO",
+                            ip
+                    );
+                    return StatusResponse.success();
+                })
+                .orElseGet(() -> StatusResponse.fail("member not found"));
+    }
+
+    // ✨ [신규] 관리자가 직접 회원의 디스코드 태그를 수정 (본인 인증 절차 없이 관리자가 즉시 수정)
+    public StatusResponse updateDiscordTag(Long id, String discordTag, String ip) {
+        if (!StringUtils.hasText(discordTag)) {
+            return StatusResponse.fail("디스코드 태그를 입력해주세요.");
+        }
+
+        return memberRepository.findById(id)
+                .map(m -> {
+                    m.setDiscordTag(discordTag.trim());
+                    memberRepository.save(m);
+                    accessLogService.logByMember(m, "ACCOUNT_DISCORD_UPDATE", ip);
+                    return StatusResponse.success();
+                })
+                .orElseGet(() -> StatusResponse.fail("member not found"));
     }
 
     public StatusResponse toggleSuspension(Long id, String ip) {
@@ -499,8 +992,7 @@ public class AdminService {
 
     private void addFileToZip(
             ZipOutputStream zipOut,
-            String loginId,
-            String type,
+            String folderName, // ✨ 변경됨 (기존 loginId, type 제거)
             String originalPath,
             boolean include,
             Set<String> allowedExtensions
@@ -521,12 +1013,125 @@ public class AdminService {
             }
         }
 
-        String entryName = loginId + "/" + type + "_" + file.getName();
+        // ✨ 핵심: ZIP 안에서의 파일 경로를 "22 김형민/원래파일명.확장자" 형태로 지정!
+        String entryName = folderName + "/" + file.getName().replaceFirst("^plan_[0-9a-f]{32}_", "계획서_");
         zipOut.putNextEntry(new ZipEntry(entryName));
         try (BufferedInputStream in = new BufferedInputStream(new FileInputStream(file))) {
             in.transferTo(zipOut);
         }
         zipOut.closeEntry();
+    }
+
+    // ✨ [2026-09-29 추가] 계획서를 파일로 올린 경우 원본도 함께 담는다 — "전체"면 형식 무관,
+    // "PDF만"/"PPT만"이면 해당 확장자인 원본만.
+    private void addPlanFileToZip(ZipOutputStream zipOut, String folderName, String planFilePath,
+                                  boolean includeAll, boolean includePdf, boolean includePresentation) throws IOException {
+        if (!StringUtils.hasText(planFilePath)) {
+            return;
+        }
+        if (includeAll) {
+            addFileToZip(zipOut, folderName, planFilePath, true, Collections.emptySet());
+            return;
+        }
+        addFileToZip(zipOut, folderName, planFilePath, includePdf, Set.of("pdf"));
+        addFileToZip(zipOut, folderName, planFilePath, includePresentation, Set.of("ppt", "pptx"));
+    }
+
+    // ✨ [2026-09-02 추가] 웹에서 작성한 계획서(PLAN)는 파일이 아니라 텍스트 필드로 저장되므로,
+    // ZIP에 담을 때 그 자리에서 PDF로 변환해서 넣는다. 기존 파일 기반 제출(지난 학기 등)은
+    // planGoal 등이 전부 비어있어 이 메서드가 아무 일도 하지 않고 그냥 넘어간다.
+    private void addPlanPdfToZip(ZipOutputStream zipOut, String folderName, AssemblyReport report, boolean includePdf) throws IOException {
+        if (!includePdf || !isWebAuthoredPlan(report)) {
+            return;
+        }
+
+        String projectTitle = assemblyProjectRepository
+                .findByLoginIdAndYearAndSemester(report.getLoginId(), report.getYear(), report.getSemester())
+                .map(AssemblyProject::getTitle)
+                .filter(StringUtils::hasText)
+                .orElse(report.getMonth() + "월 프로젝트 계획서");
+
+        byte[] pdf = planPdfGenerator.generate(
+                projectTitle,
+                folderName,
+                report.getDate(),
+                report.getPlanOverview(),
+                report.getPlanGoals(),
+                report.getPlanRoadmapItems().stream()
+                        .map(t -> new kr.co.devsign.devsign_backend.dto.assembly.PlanRoadmapItemDto(t.getTitle(), t.getStartDate(), t.getEndDate(), t.getDetail()))
+                        .toList(),
+                report.getPlanRoles().stream()
+                        .map(r -> new kr.co.devsign.devsign_backend.dto.assembly.PlanRoleDto(r.getLoginId(), r.getName(), r.getRole(), r.getDuties()))
+                        .toList(),
+                report.getPlanLinks().stream()
+                        .map(l -> new kr.co.devsign.devsign_backend.dto.assembly.PlanLinkDto(l.getLabel(), l.getUrl()))
+                        .toList(),
+                report.getPlanNotes()
+        );
+
+        String safeTitle = projectTitle.replaceAll("[\\\\/:*?\"<>|]", "_");
+        String entryName = folderName + "/" + safeTitle + ".pdf";
+        zipOut.putNextEntry(new ZipEntry(entryName));
+        zipOut.write(pdf);
+        zipOut.closeEntry();
+    }
+
+    private boolean isWebAuthoredPlan(AssemblyReport report) {
+        return "PLAN".equals(report.getType()) && (
+                StringUtils.hasText(report.getPlanOverview())
+                        || !report.getPlanGoals().isEmpty()
+                        || !report.getPlanRoadmapItems().isEmpty()
+                        || !report.getPlanRoles().isEmpty()
+                        || !report.getPlanLinks().isEmpty()
+                        || StringUtils.hasText(report.getPlanNotes())
+        );
+    }
+
+    // ✨ [2026-09-04 신규] 팀 공유 자료의 계획서(PLAN) 버전 — addPlanPdfToZip과 동일한 방식이지만
+    // Team.projectTitle을 그대로 제목으로 쓴다(개인용처럼 별도 조회 불필요).
+    private void addTeamPlanPdfToZip(ZipOutputStream zipOut, String folderName, TeamSubmission ts, boolean includePdf) throws IOException {
+        if (!includePdf || !isWebAuthoredTeamPlan(ts)) {
+            return;
+        }
+
+        String projectTitle = StringUtils.hasText(ts.getTeam().getProjectTitle())
+                ? ts.getTeam().getProjectTitle()
+                : ts.getMonth() + "월 팀 프로젝트 계획서";
+
+        byte[] pdf = planPdfGenerator.generate(
+                projectTitle,
+                folderName,
+                ts.getDate(),
+                ts.getPlanOverview(),
+                ts.getPlanGoals(),
+                ts.getPlanRoadmapItems().stream()
+                        .map(t -> new kr.co.devsign.devsign_backend.dto.assembly.PlanRoadmapItemDto(t.getTitle(), t.getStartDate(), t.getEndDate(), t.getDetail()))
+                        .toList(),
+                ts.getPlanRoles().stream()
+                        .map(r -> new kr.co.devsign.devsign_backend.dto.assembly.PlanRoleDto(r.getLoginId(), r.getName(), r.getRole(), r.getDuties()))
+                        .toList(),
+                ts.getPlanLinks().stream()
+                        .map(l -> new kr.co.devsign.devsign_backend.dto.assembly.PlanLinkDto(l.getLabel(), l.getUrl()))
+                        .toList(),
+                ts.getPlanNotes()
+        );
+
+        String safeTitle = projectTitle.replaceAll("[\\\\/:*?\"<>|]", "_");
+        String entryName = folderName + "/" + safeTitle + ".pdf";
+        zipOut.putNextEntry(new ZipEntry(entryName));
+        zipOut.write(pdf);
+        zipOut.closeEntry();
+    }
+
+    private boolean isWebAuthoredTeamPlan(TeamSubmission ts) {
+        return "PLAN".equals(ts.getType()) && (
+                StringUtils.hasText(ts.getPlanOverview())
+                        || !ts.getPlanGoals().isEmpty()
+                        || !ts.getPlanRoadmapItems().isEmpty()
+                        || !ts.getPlanRoles().isEmpty()
+                        || !ts.getPlanLinks().isEmpty()
+                        || StringUtils.hasText(ts.getPlanNotes())
+        );
     }
 
     private File resolveFile(String path) {
@@ -615,5 +1220,32 @@ public class AdminService {
                 member.getProfileImage(),
                 member.getDeletedAt() == null ? null : member.getDeletedAt().toString()
         );
+    }
+
+    // ✨ 학번을 2자리(예: 22)로 포맷팅하는 유틸리티 메서드 추가
+    private String formatStudentId(String studentId) {
+        if (studentId == null || studentId.trim().isEmpty()) return "??";
+        String id = studentId.trim();
+        
+        // 이미 '학번'이라는 글자가 있다면 숫자만 추출
+        if (id.contains("학번")) {
+            id = id.replaceAll("[^0-9]", "");
+        }
+        
+        // 8자리 학번인 경우 (예: 20221234 -> 22)
+        if (id.length() == 8) {
+            return id.substring(2, 4);
+        }
+        
+        return id;
+    }
+
+    // ✨ [신규] "22 김형민" 형태의 zip 폴더명 생성 (중복 제거 로직에서 공용으로 사용)
+    private String buildMemberFolderName(String loginId) {
+        Member member = memberRepository.findByLoginId(loginId).orElse(null);
+        if (member != null) {
+            return formatStudentId(member.getStudentId()) + " " + member.getName();
+        }
+        return loginId;
     }
 }

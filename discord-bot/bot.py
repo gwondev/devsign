@@ -154,10 +154,188 @@ async def sync_all_members():
             all_members_info.append(get_member_status_info(m))
             
     return {
-        "status": "success", 
+        "status": "success",
         "count": len(all_members_info),
         "members": all_members_info
     }
+
+# [기능 5] 관리자 알림 - 여러 명에게 동일 메시지를 DM으로 일괄 발송 (예: 총회자료 미제출자 리마인드)
+@app.post("/send-bulk-message")
+async def send_bulk_message(request: Request):
+    data = await request.json()
+    user_tags = data.get("discordTags", [])
+    message = data.get("message", "")
+
+    if not message or not message.strip():
+        return {"status": "error", "message": "메시지 내용이 비어있습니다."}
+
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return {"status": "error", "message": "서버를 찾을 수 없습니다."}
+
+    results = []
+    for tag in user_tags:
+        member = discord.utils.get(guild.members, name=tag)
+        if not member:
+            results.append({"discordTag": tag, "status": "not_found"})
+            continue
+        try:
+            await member.send(message)
+            results.append({"discordTag": tag, "status": "success"})
+        except Exception as e:
+            results.append({"discordTag": tag, "status": "error", "message": str(e)})
+
+    return {"status": "done", "results": results}
+
+# [기능 6] 동아리 디스코드 서버 아이콘 URL 실시간 조회 (웹사이트 로고가 서버 아이콘 변경에 항상
+# 맞춰지도록, URL을 하드코딩하지 않고 매번 디스코드에서 최신 값을 받아온다)
+@app.get("/guild-icon")
+async def get_guild_icon():
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return {"status": "error", "iconUrl": None}
+
+    if guild.icon:
+        return {"status": "success", "iconUrl": guild.icon.url}
+    return {"status": "success", "iconUrl": None}
+
+# [기능 7] 총회 출석용 - 특정 메시지에 지정한 이모지(기본 ✅)로 반응한 사람 목록 조회.
+# 메시지가 어느 채널에 있는지 모르는 상태로 메시지 ID만 받으므로, 서버의 모든 텍스트 채널을
+# 순서대로 뒤져서 fetch_message가 성공하는 채널을 찾는다(채널 수가 아주 많지 않은 소규모
+# 동아리 서버 기준으로는 충분히 빠름).
+@app.get("/message-reactors/{message_id}")
+async def get_message_reactors(message_id: int, emoji: str = "✅"):
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return {"status": "error", "message": "서버를 찾을 수 없습니다."}
+
+    target_message = None
+    for channel in guild.text_channels:
+        try:
+            target_message = await channel.fetch_message(message_id)
+            break
+        except (discord.NotFound, discord.Forbidden):
+            continue
+        except Exception:
+            continue
+
+    if target_message is None:
+        return {"status": "not_found", "message": "해당 메시지를 찾을 수 없습니다. 메시지 ID가 맞는지 확인해주세요."}
+
+    target_reaction = None
+    for reaction in target_message.reactions:
+        if str(reaction.emoji) == emoji:
+            target_reaction = reaction
+            break
+
+    if target_reaction is None:
+        return {"status": "no_reaction", "message": f"이 메시지에 '{emoji}' 반응이 하나도 없습니다."}
+
+    reactors = []
+    async for user in target_reaction.users():
+        if user.bot:
+            continue
+        member = guild.get_member(user.id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user.id)
+            except Exception:
+                member = None
+
+        if member:
+            reactors.append(get_member_status_info(member))
+        else:
+            # 서버를 이미 나간 사람 등, 길드 멤버 정보를 못 가져오는 경우에도 디스코드 태그는 남긴다
+            reactors.append({
+                "discordTag": user.name,
+                "name": user.display_name,
+                "studentId": "Unknown",
+                "userStatus": "일반",
+                "role": "USER",
+                "avatarUrl": str(user.display_avatar.url),
+            })
+
+    return {
+        "status": "success",
+        "messageId": str(message_id),
+        "channelName": getattr(target_message.channel, "name", ""),
+        "count": len(reactors),
+        "members": reactors,
+    }
+
+# ✨ [2026-10-01] 채널 이름 비교용 — 이모지·구분자(｜, -, 공백)를 빼고 글자만 남긴다 ("📢｜동아리공지" → "동아리공지")
+def _norm_name(s):
+    import re
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", s or "")
+
+async def _find_message(guild, message_id: int):
+    for channel in guild.text_channels:
+        try:
+            return await channel.fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden):
+            continue
+        except Exception:
+            continue
+    return None
+
+# [기능 8] 공지 채널 최근 메시지 — 총회 공지를 자동으로 찾기 위해 (채널은 이름에 키워드가 들어간 첫 텍스트 채널)
+@app.get("/channel-messages")
+async def get_channel_messages(channel: str = "동아리공지", limit: int = 100):
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return {"status": "error", "message": "서버를 찾을 수 없습니다."}
+    key = _norm_name(channel)
+    target = next((c for c in guild.text_channels if key and key in _norm_name(c.name)), None)
+    if target is None:
+        return {"status": "not_found", "message": f"'{channel}' 채널을 찾을 수 없습니다.",
+                "channels": [c.name for c in guild.text_channels]}
+    messages = []
+    try:
+        async for m in target.history(limit=max(1, min(limit, 300))):
+            messages.append({
+                "id": str(m.id),
+                "content": (m.content or "")[:1500],
+                "createdAt": m.created_at.isoformat(),
+                "author": getattr(m.author, "display_name", ""),
+                "reactions": [{"emoji": str(r.emoji), "count": r.count} for r in m.reactions],
+            })
+    except discord.Forbidden:
+        return {"status": "error", "message": f"'{target.name}' 채널의 기록을 읽을 권한이 없습니다."}
+    return {"status": "success", "guildId": str(guild.id), "channelId": str(target.id),
+            "channelName": target.name, "messages": messages}
+
+# [기능 9] 한 메시지에 어떤 이모지로든 반응한 사람 전체 (사람마다 누른 이모지 목록 포함) — 총회 공지 반응 현황용
+@app.get("/message-all-reactors/{message_id}")
+async def get_message_all_reactors(message_id: int):
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return {"status": "error", "message": "서버를 찾을 수 없습니다."}
+    target_message = await _find_message(guild, message_id)
+    if target_message is None:
+        return {"status": "not_found", "message": "해당 메시지를 찾을 수 없습니다."}
+    by_user = {}
+    for reaction in target_message.reactions:
+        async for user in reaction.users():
+            if user.bot:
+                continue
+            entry = by_user.get(user.id)
+            if entry is None:
+                member = guild.get_member(user.id)
+                if member is None:
+                    try:
+                        member = await guild.fetch_member(user.id)
+                    except Exception:
+                        member = None
+                info = get_member_status_info(member) if member else {
+                    "discordTag": user.name, "name": user.display_name, "studentId": "Unknown",
+                    "userStatus": "일반", "role": "USER", "avatarUrl": str(user.display_avatar.url),
+                }
+                entry = {**info, "emojis": []}
+                by_user[user.id] = entry
+            entry["emojis"].append(str(reaction.emoji))
+    return {"status": "success", "messageId": str(message_id),
+            "channelName": getattr(target_message.channel, "name", ""),
+            "count": len(by_user), "members": list(by_user.values())}
 
 # 메인 실행 루프
 async def main():

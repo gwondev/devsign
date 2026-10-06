@@ -1,13 +1,14 @@
 import { api } from "../../api/axios";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { User, Lock, ArrowRight, ArrowLeft, ShieldAlert } from "lucide-react";
+import { User, Lock, ArrowRight, ArrowLeft } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
 // onLoginSuccess의 타입을 boolean에서 any(객체)로 변경하여 상세 데이터를 받을 수 있게 합니다.
 export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: string) => void; onLoginSuccess: (userData: any) => void }) => {
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -18,7 +19,8 @@ export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: strin
       // 백엔드 로그인 API 호출
       const response = await api.post('/members/login', {
         loginId: userId,
-        password: password
+        password: password,
+        rememberMe: rememberMe
       });
 
       // ✨ 백엔드 응답 데이터 확인 로직
@@ -70,13 +72,13 @@ export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: strin
 
           <div className="relative z-10">
             <div className="mb-8 md:mb-10">
-              <h1 className="text-3xl md:text-4xl font-black text-slate-900 mb-2 md:mb-3 tracking-tighter">Welcome!</h1>
+              <h1 className="text-3xl md:text-4xl font-black text-slate-900 mb-2 md:mb-3 tracking-tighter">DEVSIGN</h1>
               <p className="text-slate-500 font-medium text-sm md:text-base">DEVSIGN 서비스 로그인을 진행해주세요.</p>
             </div>
 
             <form className="space-y-4 md:space-y-5" onSubmit={handleLogin}>
               <div className="space-y-1.5 md:space-y-2">
-                <label className="text-[10px] md:text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">ID</label>
+                <label className="text-slate-500 font-medium text-sm md:text-base ml-1">ID</label>
                 <div className="relative">
                   <User className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4 md:w-[18px] md:h-[18px]" />
                   <input
@@ -90,7 +92,7 @@ export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: strin
               </div>
 
               <div className="space-y-1.5 md:space-y-2">
-                <label className="text-[10px] md:text-xs font-black text-slate-400 ml-1 uppercase tracking-widest">Password</label>
+                <label className="text-slate-500 font-medium text-sm md:text-base ml-1">PASSWORD</label>
                 <div className="relative">
                   <Lock className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4 md:w-[18px] md:h-[18px]" />
                   <input
@@ -103,23 +105,34 @@ export const Login = ({ onNavigate, onLoginSuccess }: { onNavigate: (page: strin
                 </div>
               </div>
 
-              <div className="flex justify-end pt-0.5">
-                <button 
-                  type="button" 
-                  onClick={() => onNavigate("find-account")} 
+              <div className="flex items-center justify-between pt-0.5">
+                <label className="flex items-center gap-1.5 text-[11px] md:text-xs font-bold text-slate-500 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-3.5 h-3.5 md:w-4 md:h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 accent-indigo-600"
+                  />
+                  자동 로그인
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onNavigate("find-account")}
                   className="text-[11px] md:text-xs font-bold text-slate-400 hover:text-indigo-600 transition-colors"
                 >
                   계정 정보를 잊으셨나요?
                 </button>
               </div>
 
-              {/* ✨ 버튼 py 크기 조정 완료 */}
+              {/* ✨ [2026-09-30] 글자를 정확히 가운데로 — 화살표를 글자 옆에 두면 화살표 폭만큼 글자가 왼쪽으로
+                  밀려 보였다. 화살표는 오른쪽 끝에 따로 고정한다. */}
               <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3.5 md:py-4.5 rounded-xl md:rounded-2xl bg-indigo-600 text-white font-black text-base md:text-lg shadow-xl shadow-indigo-200/50 hover:bg-indigo-700 hover:scale-[1.02] active:scale-95 transition-all mt-4 md:mt-6 h-auto"
+                className="relative w-full h-12 md:h-14 rounded-xl md:rounded-2xl bg-[#0071E3] text-white font-bold text-base md:text-lg shadow-[0_1px_2px_rgb(0_113_227/0.2),0_4px_12px_rgb(0_113_227/0.18)] hover:bg-[#0077ED] active:scale-[0.98] transition-all mt-4 md:mt-6"
               >
-                {isLoading ? "로그인 중..." : "로그인"} <ArrowRight className="ml-2 w-4 h-4 md:w-5 md:h-5" />
+                <span>{isLoading ? "로그인 중..." : "로그인"}</span>
+                <ArrowRight className="absolute right-5 md:right-6 top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 opacity-80" />
               </Button>
             </form>
 

@@ -1,22 +1,39 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { 
-  MessageSquare, Pencil, Eye, Heart, 
-  ArrowLeft, Search, Hash, MessageCircle, Wallet 
+import {
+  MessageSquare, Pencil, Eye, Heart,
+  ArrowLeft, Search, Hash, MessageCircle, Wallet, Lock,
+  ChevronLeft, ChevronRight // ✨ 페이지 이동 화살표 아이콘 추가
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
 export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
   const [activeCategory, setActiveCategory] = useState("전체");
   const [searchQuery, setSearchQuery] = useState("");
+  
+  // ✨ 페이지네이션용 상태 추가
+  const [currentPage, setCurrentPage] = useState(1);
+  const postsPerPage = 10; // ✨ 20개에서 10개로 수정됨
+
+  // ✨ 회비 게시글 자체(제목/금액/기한)는 비로그인 사용자에게도 노출되고, 상세 내용/계좌번호만
+  // 로그인해야 볼 수 있음(백엔드가 목록 응답에서 그 정보만 지워서 내려줌) — 그래서 카테고리 탭도
+  // 로그인 여부와 상관없이 항상 노출
   const categories = ["전체", "회비", "자유", "질문"];
 
+  // 기존 검색/필터링 로직 유지
   const filteredPosts = posts
     .filter((p: any) => activeCategory === "전체" || p.category === activeCategory)
     .filter((p: any) => 
       p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
       p.author.toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+  // ✨ 현재 페이지에 해당하는 10개의 데이터만 잘라내기
+  const totalPages = Math.ceil(filteredPosts.length / postsPerPage);
+  const currentPosts = filteredPosts.slice(
+    (currentPage - 1) * postsPerPage, 
+    currentPage * postsPerPage
+  );
 
   const formatStudentId = (id: string) => {
     if (!id) return "";
@@ -67,11 +84,13 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                 type="text" 
                 placeholder="검색어를 입력하세요"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1); // ✨ 검색할 때 무조건 1페이지로 돌아가도록 설정
+                }}
                 className="pl-11 pr-4 py-3.5 bg-white border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 w-72 font-bold text-sm shadow-sm transition-all"
               />
             </div>
-            {/* ✨ 수정됨: py-3.5로 변경하여 검색창과 세로 크기 통일 */}
             <Button 
               onClick={() => {
                 if (!isLoggedIn) {
@@ -91,7 +110,10 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
           {categories.map((cat) => (
             <button
               key={cat}
-              onClick={() => setActiveCategory(cat)}
+              onClick={() => {
+                setActiveCategory(cat);
+                setCurrentPage(1); // ✨ 카테고리 바꿀 때 무조건 1페이지로 돌아가도록 설정
+              }}
               className={`flex items-center gap-1.5 md:gap-2 px-4 py-2.5 md:px-6 md:py-3.5 rounded-xl md:rounded-2xl font-black whitespace-nowrap transition-all text-[11px] md:text-sm shrink-0 ${
                 activeCategory === cat 
                   ? "bg-slate-900 text-white shadow-xl shadow-slate-200" 
@@ -109,8 +131,9 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
         </div>
 
         <div className="grid gap-3 md:gap-4">
-          {filteredPosts.length > 0 ? (
-            filteredPosts.map((post: any) => (
+          {/* ✨ filteredPosts 대신 잘라낸 currentPosts를 맵핑합니다 */}
+          {currentPosts.length > 0 ? (
+            currentPosts.map((post: any) => (
               <motion.div
                 key={post.id}
                 whileHover={{ x: 10, backgroundColor: "white" }}
@@ -126,14 +149,26 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                     }`}>
                       {post.category}
                     </span>
+                    {post.category === "회비" && !isLoggedIn && (
+                      <span className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] md:text-[10px] font-black text-slate-400 bg-slate-50 border border-slate-100 shrink-0">
+                        <Lock size={9} /> 로그인 필요
+                      </span>
+                    )}
                     <span className="text-slate-300 text-[10px] md:text-xs font-bold truncate">{post.date}</span>
                   </div>
                   <h3 className="text-[15px] md:text-xl font-[900] text-slate-900 group-hover:text-indigo-600 transition-colors mb-1.5 md:mb-2 tracking-tight truncate md:whitespace-normal md:line-clamp-1">
                     {post.title}
                   </h3>
-                  <p className="text-slate-400 font-bold text-xs md:text-sm line-clamp-1 md:leading-relaxed">
-                    {post.content}
-                  </p>
+                  {post.category === "회비" && post.feeTerm ? (
+                    <p className="text-amber-700 font-black text-xs md:text-sm line-clamp-1 md:leading-relaxed">
+                      {post.feeTerm}
+                      <span className="text-amber-400 font-bold"> · 잔액 {(post.feeFinalBalance ?? 0).toLocaleString()}원</span>
+                    </p>
+                  ) : (
+                    <p className="text-slate-400 font-bold text-xs md:text-sm line-clamp-1 md:leading-relaxed">
+                      {post.content}
+                    </p>
+                  )}
                 </div>
                 
                 <div className="flex flex-row-reverse md:flex-col items-center md:items-end justify-between w-full md:w-auto shrink-0 border-t md:border-t-0 md:border-l border-slate-50 pl-0 md:pl-8 pt-3 md:pt-0 mt-1 md:mt-0 gap-0 md:gap-8">
@@ -146,7 +181,12 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                     </div>
                     <div className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-xl md:rounded-2xl flex items-center justify-center text-slate-400 font-black text-[10px] md:text-xs border border-slate-200 overflow-hidden shadow-inner shrink-0">
                       {post.profileImage ? (
-                        <img src={post.profileImage} alt="profile" className="w-full h-full object-cover" />
+                        <img
+                          src={post.profileImage}
+                          alt="profile"
+                          className="w-full h-full object-cover"
+                          onError={(e: any) => { e.target.src = "https://cdn.discordapp.com/embed/avatars/0.png"; }}
+                        />
                       ) : (
                         <span>{post.author[0]}</span>
                       )}
@@ -162,7 +202,6 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
                     </div>
                     <div className="flex items-center gap-1 md:gap-1.5">
                       <MessageSquare className="w-3.5 h-3.5 md:w-4 md:h-4 text-slate-300 group-hover:text-indigo-400 transition-colors" />
-                      {/* ✨ 핵심 수정: commentCount, commentsList.length 등 백엔드 변수명에 맞게 유연하게 가져옵니다! */}
                       <span className="text-[10px] md:text-xs font-black tracking-tighter">
                         {(post.commentCount || post.commentsList?.length || post.comments?.length || 0).toLocaleString()}
                       </span>
@@ -186,6 +225,44 @@ export const BoardPage = ({ onNavigate, posts, isLoggedIn }: any) => {
             </div>
           )}
         </div>
+
+        {/* ✨ 페이지네이션 하단 UI 추가 */}
+        {totalPages > 1 && (
+          <div className="flex justify-center items-center gap-2 mt-10 md:mt-16">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="p-2 md:p-3 rounded-xl md:rounded-2xl bg-white border border-slate-100 text-slate-400 disabled:opacity-40 disabled:hover:bg-white hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
+            </button>
+
+            <div className="flex gap-1.5 md:gap-2">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                <button
+                  key={pageNum}
+                  onClick={() => setCurrentPage(pageNum)}
+                  className={`w-9 h-9 md:w-12 md:h-12 rounded-xl md:rounded-2xl font-black text-xs md:text-sm transition-all ${
+                    currentPage === pageNum
+                      ? "bg-slate-900 text-white shadow-xl shadow-slate-200 scale-110"
+                      : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50 hover:text-slate-600 shadow-sm"
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="p-2 md:p-3 rounded-xl md:rounded-2xl bg-white border border-slate-100 text-slate-400 disabled:opacity-40 disabled:hover:bg-white hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <ChevronRight className="w-4 h-4 md:w-5 md:h-5" />
+            </button>
+          </div>
+        )}
+
       </div>
     </div>
   );
