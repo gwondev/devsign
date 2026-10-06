@@ -1,0 +1,31 @@
+name: Sync from hmin112/webwebwebweb
+
+on:
+  schedule:
+    - cron: '0 19 * * *'   # 매일 UTC 19시 = 한국시간 새벽 4시
+  workflow_dispatch: {}      # Actions 탭에서 수동 실행 버튼
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout my repo
+        uses: actions/checkout@v4
+
+      - name: Clone upstream (teammate) repo
+        run: git clone --depth 1 https://github.com/hmin112/webwebwebweb.git /tmp/upstream
+
+      - name: Copy files over (non-destructive, keeps my extra files)
+        run: |
+          rsync -a --exclude='.git' --exclude='.github' /tmp/upstream/ ./
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "변경 없음, 커밋 생략" || git commit -m "sync: hmin112/webwebwebweb 최신 반영 ($(date +%F))"
+          git push
